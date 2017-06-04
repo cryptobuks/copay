@@ -1,5 +1,6 @@
 #txp-details,
 #view-confirm {
+  @extend .deflash-blue;
   $item-lateral-padding: 20px;
   $item-vertical-padding: 10px;
   $item-border-color: #EFEFEF;
@@ -12,7 +13,7 @@
     bottom: 92px;
   }
   .head {
-    padding: 30px $item-lateral-padding 4rem;
+    padding: 30px $item-lateral-padding 3rem;
     border-top: 0;
 
     .sending-label {
@@ -50,6 +51,9 @@
   }
   .item {
     border-color: $item-border-color;
+    &-note {
+      word-break: keep-all;
+    }
   }
   .info {
     span {
@@ -86,7 +90,24 @@
           flex-grow: 1;
         }
       }
+      &.low-fees {
+        display: flex;
+        font-size: 14px;
+        color: #aaa;
+        align-items: center;
+        i {
+          padding-right: 20px;
+        }
+      }
     }
+    .toggle-unconfirmed {
+      padding-bottom: 15px;
+    }
+    .toggle-label {
+      margin-top: 5px;
+      font-size: 14px;
+      color: $item-label-color;
+    } 
     .item-divider {
       padding-top: 1.2rem;
       color: $item-label-color;
@@ -127,10 +148,6 @@
       align-items: center;
       padding: .2rem 0;
       margin-bottom: 5px;
-
-      ~ .bp-arrow-right {
-        top: 14px;
-      }
 
       > i {
         padding: 0;
@@ -199,8 +216,8 @@
         }
 
         > div {
-          border: 3px solid #13e5b6;
-          border-radius: 50%;
+          border: 3px solid $v-success-color;
+          border-radius: $v-icon-border-radius;
           display: flex;
           height: 26px;
           width: 26px;
@@ -209,7 +226,7 @@
           justify-content: center;
           font-weight: 600;
           vertical-align: middle;
-          color: #13e5b6;
+          color: $v-success-color;
 
           &.rejected {
             background: #E15061;
@@ -260,6 +277,6 @@
   .glidera-description {
     text-align: center;
     font-size: 12px;
-    color: $mid-gray;
+    color: $v-mid-gray;
   }
 }

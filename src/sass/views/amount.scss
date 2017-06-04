@@ -3,7 +3,7 @@
   .recipient-label {
     font-size: 14px;
     padding-bottom: 0;
-    color: $mid-gray;
+    color: $v-mid-gray;
   }
   .item-no-bottom-border + .item {
       border-top: 0;
@@ -32,6 +32,13 @@
       padding-left: 48px;
     }
   }
+  @media(max-width: 320px) {
+    .bitcoin-address {
+      & > span:last-child {
+        margin-left: -2px;
+      }
+    }
+  }
   .send-gravatar {
     left: 11px;
     position: absolute;
@@ -48,11 +55,23 @@
     .amount-bar {
       padding: 24px 0;
       font-size: 18px;
+      @media(max-height: 480px) {
+        padding: 0px;
+      }
+      @media(max-width: 320px) {
+        padding: 0px;
+      }
       .title {
         float: left;
         padding-top: 10px;
-        color: $dark-gray;
+        color: $v-dark-gray;
         font-weight: bold;
+        @media(max-height: 480px) {
+          padding: 0px;
+        }
+      }
+      @media(max-height: 480px) {
+        padding-top: 3px;
       }
     }
     .amount {
@@ -64,7 +83,20 @@
       bottom: 254px;
       top: 66px;
       .light {
-        color: $light-gray;
+        color: $v-light-gray;
+      }
+      @media(max-height: 480px) {
+        top: 45px;
+      }
+      @media(max-width: 320px) {
+        bottom: 276px;
+        top: 60px;
+        & > div {
+          display: inline-block;
+        }
+        & > div:first-child {
+          display: inherit;
+        }
       }
     }
   }
@@ -80,14 +112,16 @@
       padding: 24px 0;
       font-size: 18px;
       .title {
-        float: left;
         padding-top: 10px;
-        color: $dark-gray;
+        color: $v-dark-gray;
         font-weight: bold;
         .limits {
           margin-top: 10px;
-          color: $light-gray;
+          color: $v-light-gray;
           font-size: 12px;
+        }
+        .select {
+          margin: 10px 1px;
         }
       }
     }
@@ -100,29 +134,32 @@
       bottom: 254px;
       top: 66px;
       .light {
-        color: $light-gray;
+        color: $v-light-gray;
       }
     }
   }
   .amount {
     &__editable {
-      margin-bottom: 1rem;
       &--minimize {
         font-size: 22px;
       }
       &--standard {
         font-size: 42px;
+        @media(max-height: 480px) {
+          font-size: 26px;
+          padding-top: 10px;
+        }
       }
       &--placeholder {
-        color: $light-gray;
+        color: $v-light-gray;
       }
     }
     &__number {
-      color: $dark-gray;
+      color: $v-dark-gray;
     }
     &__currency-toggle {
-      border: 1px solid $subtle-gray;
-      color: $dark-gray;
+      border: 1px solid $v-subtle-gray;
+      color: $v-dark-gray;
       border-radius: 3px;
       padding: 0 10px;
       cursor: pointer;
@@ -130,6 +167,10 @@
       position: relative;
       top: -3px;
       line-height: 1;
+      @media(max-width: 320px) {
+        line-height: 30px;
+        height: 30px;
+      }
     }
     &__results {
       &--minimize {
@@ -137,21 +178,29 @@
       }
       &--standard {
         font-size: 18px;
+        padding: 10px 0;
       }
       &--placeholder {
-        color: $light-gray;
+        color: $v-light-gray;
       }
     }
     &__result {
-      color: $light-gray;
+      color: $v-light-gray;
       font-size: .9em;
       margin-bottom: -.9em;
       line-height: 1;
+      @media(max-height: 480px) {
+        margin-bottom: 0;
+      }
     }
     &__result-equiv {
-      color: $mid-gray;
+      color: $v-mid-gray;
       font-size: 1.2em;
       margin-top: 2rem;
+      @media(max-height: 480px) {
+        margin-top: 0;
+        font-size: 16px;
+      }
     }
   }
   .keypad {
@@ -161,7 +210,7 @@
     position: absolute;
     bottom: 0;
     width: 100%;
-    color: $mid-gray;
+    color: $v-mid-gray;
 
     .row {
       padding: 0 !important;
@@ -173,12 +222,12 @@
     }
 
     .operator {
-      background-color: $subtle-gray;
+      background-color: $v-subtle-gray;
       font-weight: normal;
       cursor: pointer;
 
       &:active {
-        background-color: $light-gray;
+        background-color: $v-light-gray;
       }
     }
 
@@ -196,12 +245,16 @@
 
     .digit{
       cursor: pointer;
-      border-top: 1px solid $subtle-gray;
-      border-left: 1px solid $subtle-gray;
+      border-top: 1px solid $v-subtle-gray;
+      border-left: 1px solid $v-subtle-gray;
       &:active {
-        background-color: $subtle-gray;
+        background-color: $v-subtle-gray;
       }
     }
 
+    @media(max-height: 480px) {
+      font-size: 12px;
+
+    }
   }
 }

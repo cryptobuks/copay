@@ -1,10 +1,25 @@
 'use strict';
 
 angular.module('copayApp.controllers').controller('preferencesDeleteWalletController',
-  function($scope, $stateParams, $ionicHistory, gettextCatalog, lodash, profileService, $state, ongoingProcess, popupService) {
-    var wallet = profileService.getWallet($stateParams.walletId);
-    $scope.alias = lodash.isEqual(wallet.name, wallet.credentials.walletName) ? null : wallet.name + ' ';
-    $scope.walletName = wallet.credentials.walletName;
+  function($scope, $ionicHistory, gettextCatalog, lodash, profileService, $state, ongoingProcess, popupService, pushNotificationsService) {
+    
+    $scope.$on("$ionicView.beforeEnter", function(event, data) {
+      if (!data.stateParams || !data.stateParams.walletId) {
+        popupService.showAlert(null, gettextCatalog.getString('No wallet selected'), function() {
+          $ionicHistory.goBack();
+        });
+        return;
+      }
+      $scope.wallet = profileService.getWallet(data.stateParams.walletId);
+      if (!$scope.wallet) {
+        popupService.showAlert(null, gettextCatalog.getString('No wallet found'), function() {
+          $ionicHistory.goBack();
+        });
+        return;
+      }
+      $scope.alias = lodash.isEqual($scope.wallet.name, $scope.wallet.credentials.walletName) ? null : $scope.wallet.name + ' ';
+      $scope.walletName = $scope.wallet.credentials.walletName;
+    });
 
     $scope.showDeletePopup = function() {
       var title = gettextCatalog.getString('Warning!');
@@ -16,14 +31,20 @@ angular.module('copayApp.controllers').controller('preferencesDeleteWalletContro
 
     function deleteWallet() {
       ongoingProcess.set('deletingWallet', true);
-      profileService.deleteWalletClient(wallet, function(err) {
+      profileService.deleteWalletClient($scope.wallet, function(err) {
         ongoingProcess.set('deletingWallet', false);
         if (err) {
           popupService.showAlert(gettextCatalog.getString('Error'), err.message || err);
         } else {
+          pushNotificationsService.unsubscribe($scope.wallet);
+          $ionicHistory.nextViewOptions({
+            disableAnimate: true,
+            historyRoot: true
+          });
           $ionicHistory.clearHistory();
-          $ionicHistory.clearCache();
-          $state.go('tabs.home');
+          $state.go('tabs.settings').then(function() {
+            $state.transitionTo('tabs.home');
+          });
         }
       });
     };

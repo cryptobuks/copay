@@ -18,13 +18,13 @@ angular.module('copayApp.services').factory('txFormatService', function($filter,
   };
 
   root.formatAmountStr = function(satoshis) {
-    if (!satoshis) return;
+    if (isNaN(satoshis)) return;
     var config = configService.getSync().wallet.settings;
     return root.formatAmount(satoshis) + ' ' + config.unitName;
   };
 
   root.formatToUSD = function(satoshis, cb) {
-    if (!satoshis) return;
+    if (isNaN(satoshis)) return;
     var val = function() {
       var v1 = rateService.toFiat(satoshis, 'USD');
       if (!v1) return null;
@@ -44,7 +44,7 @@ angular.module('copayApp.services').factory('txFormatService', function($filter,
   };
 
   root.formatAlternativeStr = function(satoshis, cb) {
-    if (!satoshis) return;
+    if (isNaN(satoshis)) return;
     var config = configService.getSync().wallet.settings;
 
     var val = function() {
@@ -153,6 +153,43 @@ angular.module('copayApp.services').factory('txFormatService', function($filter,
     });
 
     return txps;
+  };
+
+  root.parseAmount = function(amount, currency) {
+    var config = configService.getSync().wallet.settings;
+    var satToBtc = 1 / 100000000;
+    var unitToSatoshi = config.unitToSatoshi;
+    var amountUnitStr;
+    var amountSat;
+    var alternativeIsoCode = config.alternativeIsoCode;
+
+    // If fiat currency
+    if (currency != 'bits' && currency != 'BTC') {
+      amountUnitStr = $filter('formatFiatAmount')(amount) + ' ' + currency;
+      amountSat = rateService.fromFiat(amount, currency).toFixed(0);
+    } else {
+      amountSat = parseInt((amount * unitToSatoshi).toFixed(0));
+      amountUnitStr = root.formatAmountStr(amountSat);
+      // convert unit to BTC
+      amount = (amountSat * satToBtc).toFixed(8);
+      currency = 'BTC';
+    }
+
+    return {
+      amount: amount, 
+      currency: currency, 
+      alternativeIsoCode: alternativeIsoCode,
+      amountSat: amountSat,
+      amountUnitStr: amountUnitStr
+    };
+  };
+
+  root.satToUnit = function(amount) {
+    var config = configService.getSync().wallet.settings;
+    var unitToSatoshi = config.unitToSatoshi;
+    var satToUnit = 1 / unitToSatoshi;
+    var unitDecimals = config.unitDecimals;
+    return parseFloat((amount * satToUnit).toFixed(unitDecimals));
   };
 
   return root;

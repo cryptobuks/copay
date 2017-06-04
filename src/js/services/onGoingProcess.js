@@ -3,6 +3,7 @@
 angular.module('copayApp.services').factory('ongoingProcess', function($log, $timeout, $filter, lodash, $ionicLoading, gettext, platformInfo) {
   var root = {};
   var isCordova = platformInfo.isCordova;
+  var isWP = platformInfo.isWP;
 
   var ongoingProcess = {};
 
@@ -30,25 +31,26 @@ angular.module('copayApp.services').factory('ongoingProcess', function($log, $ti
     'sendingTx': gettext('Sending transaction'),
     'signingTx': gettext('Signing transaction'),
     'sweepingWallet': gettext('Sweeping Wallet...'),
-    'validatingWallet': gettext('Validating wallet integrity...'),
     'validatingWords': gettext('Validating recovery phrase...'),
     'loadingTxInfo': gettext('Loading transaction info...'),
     'sendingFeedback': gettext('Sending feedback...'),
     'generatingNewAddress': gettext('Generating new address...'),
-    'gettingAddresses': gettext('Getting addresses...'),
     'sendingByEmail': gettext('Preparing addresses...'),
     'sending2faCode': gettext('Sending 2FA code...'),
     'buyingBitcoin': gettext('Buying Bitcoin...'),
     'sellingBitcoin': gettext('Selling Bitcoin...'),
+    'fetchingBitPayAccount': gettext('Fetching BitPay Account...'),
     'updatingGiftCards': 'Updating Gift Cards...',
     'updatingGiftCard': 'Updating Gift Card...',
     'cancelingGiftCard': 'Canceling Gift Card...',
-    'creatingGiftCard': 'Creating Gift Card...'
+    'creatingGiftCard': 'Creating Gift Card...',
+    'buyingGiftCard': 'Buying Gift Card...',
+    'topup': 'Top up in progress...'
   };
 
   root.clear = function() {
     ongoingProcess = {};
-    if (isCordova) {
+    if (isCordova && !isWP) {
       window.plugins.spinnerDialog.hide();
     } else {
       $ionicLoading.hide();
@@ -78,17 +80,19 @@ angular.module('copayApp.services').factory('ongoingProcess', function($log, $ti
     if (customHandler) {
       customHandler(processName, showName, isOn);
     } else if (root.onGoingProcessName) {
-      if (isCordova) {
-        window.plugins.spinnerDialog.show(null, showName, true);
+      if (isCordova && !isWP) {
+        window.plugins.spinnerDialog.show(null, showName, root.clear);
       } else {
 
-        var tmpl = '<div class="item-icon-left">' + showName + '<ion-spinner class="spinner-stable" icon="lines"></ion-spinner></div>';
+        var tmpl;
+        if (isWP) tmpl = '<div>' + showName + '</div>';
+        else tmpl = '<div class="item-icon-left">' + showName + '<ion-spinner class="spinner-stable" icon="lines"></ion-spinner></div>';
         $ionicLoading.show({
           template: tmpl
         });
       }
     } else {
-      if (isCordova) {
+      if (isCordova && !isWP) {
         window.plugins.spinnerDialog.hide();
       } else {
         $ionicLoading.hide();

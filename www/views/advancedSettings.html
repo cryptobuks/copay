@@ -7,29 +7,6 @@
 
   <ion-content>
     <div class="settings-list list">
-      <div class="item item-divider" translate>Enabled Integrations</div>
-
-      <ion-toggle ng-show="!isWP" ng-model="bitpayCardEnabled.value" toggle-class="toggle-balanced" ng-change="bitpayCardChange()">
-        <span class="toggle-label" translate>Enable BitPay Card Integration</span>
-      </ion-toggle>
-
-      <ion-toggle ng-show="!isWP" ng-model="amazonEnabled.value" toggle-class="toggle-balanced" ng-change="amazonChange()">
-        <span class="toggle-label" translate>Enable Amazon Integration</span>
-      </ion-toggle>
-
-      <ion-toggle ng-show="!isWP" ng-model="glideraEnabled.value" toggle-class="toggle-balanced" ng-change="glideraChange()">
-        <span class="toggle-label" translate>Enable Glidera Service</span>
-      </ion-toggle>
-
-      <!-- disable coinbase for this release -->
-
-      <!-- <ion-toggle ng-show="!isWP" ng-model="coinbaseEnabled" toggle-class="toggle-balanced" ng-change="coinbaseChange()">
-        <span class="toggle-label" translate>Enable Coinbase Service</span>
-      </ion-toggle> -->
-
-
-      <div class="item item-divider" translate>Wallet Operation</div>
-
       <ion-toggle class="has-comment" ng-model="spendUnconfirmed.value" toggle-class="toggle-balanced" ng-change="spendUnconfirmedChange()">
         <span class="toggle-label" translate>Use Unconfirmed Funds</span>
       </ion-toggle>
@@ -37,12 +14,7 @@
         If enabled, wallets will also try to spend unconfirmed funds. This option may cause transaction delays.
       </div>
 
-      <div class="item item-divider" translate>Experimental Features</div>
-      <div class="settings-explanation">
-        <div class="settings-description" translate>
-          These features aren't quite ready for primetime. They may change, stop working, or disappear at any time.
-        </div>
-      </div>
+      <div class="item item-divider"></div>
 
       <ion-toggle class="has-comment" ng-show="!isWP" ng-model="recentTransactionsEnabled.value" toggle-class="toggle-balanced" ng-change="recentTransactionsChange()">
         <span class="toggle-label" translate>Recent Transaction Card</span>
@@ -51,22 +23,11 @@
         If enabled, the Recent Transactions card - a list of transactions occuring across all wallets - will appear in the Home tab.
       </div>
 
-      <ion-toggle class="has-comment" ng-model="global.developmentUtilitiesEnabled.value" toggle-class="toggle-balanced" ng-change="toggledDevelopmentUtils()">
-        <span class="toggle-label" translate>Development Utilities</span>
+      <div class="item item-divider"></div>
+
+      <ion-toggle ng-model="hideNextSteps.value" toggle-class="toggle-balanced" ng-change="nextStepsChange()">
+        <span class="toggle-label" translate>Hide Next Steps Card</span>
       </ion-toggle>
-      <div class="comment" translate>
-        These features make it easier to test complex functionality on all devices. They may be unstable.
-      </div>
-
-      <!-- disable frequently used for this release -->
-
-      <!-- <ion-toggle ng-show="!isWP" ng-model="frequentlyUsedEnabled.value" toggle-class="toggle-balanced" ng-change="frequentlyUsedChange()">
-        <span class="toggle-label" translate>Frequently Used Card</span>
-      </ion-toggle>
-      <div ng-style="{'padding':'15px', 'background-color': '#fff', 'color': 'rgba(74, 74, 74, 0.8)'}">
-        <span transaction>If enabled, the Frequently Used card - a list of the most commonly chosen recipients - will appear in the Send tab.</span>
-      </div> -->
-
     </div>
   </ion-content>
 </ion-view>

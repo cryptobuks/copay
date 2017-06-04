@@ -3,41 +3,44 @@
 angular.module('copayApp.controllers').controller('importController',
   function($scope, $timeout, $log, $state, $stateParams, $ionicHistory, $ionicScrollDelegate, profileService, configService, sjcl, ledger, trezor, derivationPathHelper, platformInfo, bwcService, ongoingProcess, walletService, popupService, gettextCatalog, appConfigService) {
 
-    var isChromeApp = platformInfo.isChromeApp;
-    var isDevel = platformInfo.isDevel;
     var reader = new FileReader();
     var defaults = configService.getDefaults();
     var errors = bwcService.getErrors();
 
     $scope.init = function() {
-      $scope.isSafari = platformInfo.isSafari;
+      $scope.supportsLedger = platformInfo.supportsLedger;
+      $scope.supportsTrezor = platformInfo.supportsTrezor;
       $scope.isCordova = platformInfo.isCordova;
       $scope.formData = {};
       $scope.formData.bwsurl = defaults.bws.url;
       $scope.formData.derivationPath = derivationPathHelper.default;
       $scope.formData.account = 1;
       $scope.importErr = false;
-      $scope.showHardwareWallet = appConfigService.name == 'copay';
+      $scope.isCopay = appConfigService.name == 'copay';
 
       if ($stateParams.code)
         $scope.processWalletInfo($stateParams.code);
 
       $scope.seedOptions = [];
 
-      if (isChromeApp) {
+      if ($scope.supportsLedger) {
         $scope.seedOptions.push({
-          id: 'ledger',
-          label: 'Ledger Hardware Wallet',
+          id: walletService.externalSource.ledger.id,
+          label: walletService.externalSource.ledger.longName,
         });
       }
 
-      if (isChromeApp || isDevel) {
+      if ($scope.supportsTrezor) {
         $scope.seedOptions.push({
-          id: 'trezor',
-          label: 'Trezor Hardware Wallet',
+          id: walletService.externalSource.trezor.id,
+          label: walletService.externalSource.trezor.longName,
         });
-        $scope.seedSource = $scope.seedOptions[0];
+        $scope.formData.seedSource = $scope.seedOptions[0];
       }
+
+      $timeout(function() {
+        $scope.$apply();
+      });
     };
 
     $scope.processWalletInfo = function(code) {
@@ -238,6 +241,7 @@ angular.module('copayApp.controllers').controller('importController',
 
       if (!words) {
         popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('Please enter the recovery phrase'));
+        return;
       } else if (words.indexOf('xprv') == 0 || words.indexOf('tprv') == 0) {
         return _importExtendedPrivateKey(words, opts);
       } else if (words.indexOf('xpub') == 0 || words.indexOf('tpuv') == 0) {
@@ -256,14 +260,14 @@ angular.module('copayApp.controllers').controller('importController',
     };
 
     $scope.importTrezor = function(account, isMultisig) {
-      trezor.getInfoForNewWallet(isMultisig, account, function(err, lopts) {
+      trezor.getInfoForNewWallet(isMultisig, account, 'livenet', function(err, lopts) {
         ongoingProcess.clear();
         if (err) {
           popupService.showAlert(gettextCatalog.getString('Error'), err);
           return;
         }
 
-        lopts.externalSource = 'trezor';
+        lopts.externalSource = walletService.externalSource.trezor.id;
         lopts.bwsurl = $scope.formData.bwsurl;
         ongoingProcess.set('importingWallet', true);
         $log.debug('Import opts', lopts);
@@ -280,16 +284,16 @@ angular.module('copayApp.controllers').controller('importController',
     };
 
     $scope.importHW = function(form) {
-      if (form.$invalid || $scope.formData.ccount < 0) {
+      if (form.$invalid || $scope.formData.account < 0) {
         popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('There is an error in the form'));
         return;
       }
 
       $scope.importErr = false;
 
-      var account = $scope.formData.ccount;
+      var account = $scope.formData.account;
 
-      if ($scope.seedSource.id == 'trezor') {
+      if ($scope.formData.seedSource.id == walletService.externalSource.trezor.id) {
         if (account < 1) {
           popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('Invalid account number'));
           return;
@@ -297,12 +301,12 @@ angular.module('copayApp.controllers').controller('importController',
         account = account - 1;
       }
 
-      switch ($scope.seedSource.id) {
-        case ('ledger'):
+      switch ($scope.formData.seedSource.id) {
+        case (walletService.externalSource.ledger.id):
           ongoingProcess.set('connectingledger', true);
           $scope.importLedger(account);
           break;
-        case ('trezor'):
+        case (walletService.externalSource.trezor.id):
           ongoingProcess.set('connectingtrezor', true);
           $scope.importTrezor(account, $scope.formData.isMultisig);
           break;
@@ -312,14 +316,14 @@ angular.module('copayApp.controllers').controller('importController',
     };
 
     $scope.importLedger = function(account) {
-      ledger.getInfoForNewWallet(true, account, function(err, lopts) {
+      ledger.getInfoForNewWallet(true, account, 'livenet', function(err, lopts) {
         ongoingProcess.clear();
         if (err) {
           popupService.showAlert(gettextCatalog.getString('Error'), err);
           return;
         }
 
-        lopts.externalSource = 'ledger';
+        lopts.externalSource = lopts.externalSource = walletService.externalSource.ledger.id;
         lopts.bwsurl = $scope.formData.bwsurl;
         ongoingProcess.set('importingWallet', true);
         $log.debug('Import opts', lopts);
@@ -336,9 +340,7 @@ angular.module('copayApp.controllers').controller('importController',
     };
 
     var finish = function(wallet) {
-      walletService.updateRemotePreferences(wallet, {}, function() {
-        $log.debug('Remote preferences saved for:' + wallet.credentials.walletId)
-      });
+      walletService.updateRemotePreferences(wallet);
 
       profileService.setBackupFlag(wallet.credentials.walletId);
       if ($stateParams.fromOnboarding) {
@@ -354,7 +356,9 @@ angular.module('copayApp.controllers').controller('importController',
 
     $scope.showAdvChange = function() {
       $scope.showAdv = !$scope.showAdv;
-      $scope.resizeView();
+      $timeout(function() {
+        $scope.resizeView();
+      }, 100);
     };
 
     $scope.resizeView = function() {
@@ -363,7 +367,8 @@ angular.module('copayApp.controllers').controller('importController',
       }, 10);
     };
 
-    $scope.$on("$ionicView.beforeEnter", function(event, data) {
+    $scope.$on("$ionicView.afterEnter", function(event, data) {
+      $scope.showAdv = false;
       $scope.init();
     });
 

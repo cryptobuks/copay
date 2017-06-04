@@ -1,9 +1,10 @@
 'use strict';
 
-angular.module('copayApp.services').factory('openURLService', function($rootScope, $ionicHistory, $document, $log, $state, platformInfo, lodash, profileService, incomingData) {
+angular.module('copayApp.services').factory('openURLService', function($rootScope, $ionicHistory, $document, $log, $state, platformInfo, lodash, profileService, incomingData, appConfigService) {
   var root = {};
 
   var handleOpenURL = function(args) {
+
     $log.info('Handling Open URL: ' + JSON.stringify(args));
     // Stop it from caching the first view as one to return when the app opens
     $ionicHistory.nextViewOptions({
@@ -61,10 +62,10 @@ angular.module('copayApp.services').factory('openURLService', function($rootScop
           handleOpenURL({
             url: pathData.substring(pathData.indexOf('bitcoin:'))
           });
-        } else if (pathData.indexOf('copay:') != -1) {
-          $log.debug('Copay URL found');
+        } else if (pathData.indexOf(appConfigService.name + '://') != -1) {
+          $log.debug(appConfigService.name + ' URL found');
           handleOpenURL({
-            url: pathData.substring(pathData.indexOf('copay:'))
+            url: pathData.substring(pathData.indexOf(appConfigService.name + '://'))
           });
         }
       });
@@ -84,6 +85,7 @@ angular.module('copayApp.services').factory('openURLService', function($rootScop
         $log.debug('Registering Browser handlers base:' + base);
         navigator.registerProtocolHandler('bitcoin', url, 'Copay Bitcoin Handler');
         navigator.registerProtocolHandler('web+copay', url, 'Copay Wallet Handler');
+        navigator.registerProtocolHandler('web+bitpay', url, 'Bitpay Wallet Handler');
       }
     }
   };
@@ -102,5 +104,5 @@ angular.module('copayApp.services').factory('openURLService', function($rootScop
     });
   };
 
-return root;
+  return root;
 });

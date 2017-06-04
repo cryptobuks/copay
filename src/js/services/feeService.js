@@ -5,6 +5,7 @@ angular.module('copayApp.services').factory('feeService', function($log, $stateP
 
   // Constant fee options to translate
   root.feeOpts = {
+    urgent: gettext('Urgent'),
     priority: gettext('Priority'),
     normal: gettext('Normal'),
     economy: gettext('Economy'),
@@ -15,9 +16,9 @@ angular.module('copayApp.services').factory('feeService', function($log, $stateP
     return configService.getSync().wallet.settings.feeLevel || 'normal';
   };
 
-  root.getCurrentFeeValue = function(network, cb) {
+  root.getCurrentFeeValue = function(network, customFeeLevel, cb) {
     network = network || 'livenet';
-    var feeLevel = root.getCurrentFeeLevel();
+    var feeLevel = customFeeLevel || root.getCurrentFeeLevel();
 
     root.getFeeLevels(function(err, levels) {
       if (err) return cb(err);
@@ -49,13 +50,7 @@ angular.module('copayApp.services').factory('feeService', function($log, $stateP
       walletClient.getFeeLevels('testnet', function(errTestnet, levelsTestnet) {
         if (errLivenet || errTestnet) {
           return cb(gettextCatalog.getString('Could not get dynamic fee'));
-        } else {
-          for (var i = 0; i < 4; i++) {
-            levelsLivenet[i]['feePerKBUnit'] = txFormatService.formatAmount(levelsLivenet[i].feePerKB) + ' ' + unitName;
-            levelsTestnet[i]['feePerKBUnit'] = txFormatService.formatAmount(levelsTestnet[i].feePerKB) + ' ' + unitName;
-          }
         }
-
         return cb(null, {
           'livenet': levelsLivenet,
           'testnet': levelsTestnet

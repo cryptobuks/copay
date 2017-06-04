@@ -1,40 +1,34 @@
 'use strict';
 
-angular.module('copayApp.controllers').controller('confirmController', function($rootScope, $scope, $interval, $filter, $timeout, $ionicScrollDelegate, gettextCatalog, walletService, platformInfo, lodash, configService, rateService, $stateParams, $window, $state, $log, profileService, bitcore, txFormatService, ongoingProcess, $ionicModal, popupService, $ionicHistory, $ionicConfig, payproService, feeService, amazonService, glideraService, bwcError, bitpayCardService) {
+angular.module('copayApp.controllers').controller('confirmController', function($rootScope, $scope, $interval, $filter, $timeout, $ionicScrollDelegate, gettextCatalog, walletService, platformInfo, lodash, configService, rateService, $stateParams, $window, $state, $log, profileService, bitcore, txFormatService, ongoingProcess, $ionicModal, popupService, $ionicHistory, $ionicConfig, payproService, feeService, bwcError) {
   var cachedTxp = {};
+  var feeLevel;
+  var feePerKb;
   var toAmount;
   var isChromeApp = platformInfo.isChromeApp;
   var countDown = null;
-  var giftCardAmountUSD;
-  var giftCardAccessKey;
-  var giftCardInvoiceTime;
-  var giftCardUUID;
   var cachedSendMax = {};
   $scope.isCordova = platformInfo.isCordova;
-  $ionicConfig.views.swipeBackEnabled(false);
+
+  $scope.$on("$ionicView.beforeLeave", function(event, data) {
+    $ionicConfig.views.swipeBackEnabled(true);
+  });
+
+  $scope.$on("$ionicView.enter", function(event, data) {
+    $ionicConfig.views.swipeBackEnabled(false);
+  });
 
   $scope.$on("$ionicView.beforeEnter", function(event, data) {
-    // Amazon.com Gift Card parameters
-    $scope.isGiftCard = data.stateParams.isGiftCard;
-    giftCardAmountUSD = data.stateParams.giftCardAmountUSD;
-    giftCardAccessKey = data.stateParams.giftCardAccessKey;
-    giftCardInvoiceTime = data.stateParams.giftCardInvoiceTime;
-    giftCardUUID = data.stateParams.giftCardUUID;
-
-    // Glidera parameters
-    $scope.isGlidera = data.stateParams.isGlidera;
-    $scope.glideraAccessToken = data.stateParams.glideraAccessToken;
 
     toAmount = data.stateParams.toAmount;
     cachedSendMax = {};
+    $scope.showAddress = false;
     $scope.useSendMax = data.stateParams.useSendMax == 'true' ? true : false;
-    var isWallet = data.stateParams.isWallet || 'false';
-    $scope.isWallet = (isWallet.toString().trim().toLowerCase() == 'true' ? true : false);
-    $scope.cardId = data.stateParams.cardId;
-    $scope.cardAmountUSD = data.stateParams.cardAmountUSD;
+    $scope.recipientType = data.stateParams.recipientType || null;
     $scope.toAddress = data.stateParams.toAddress;
     $scope.toName = data.stateParams.toName;
     $scope.toEmail = data.stateParams.toEmail;
+    $scope.toColor = data.stateParams.toColor;
     $scope.description = data.stateParams.description;
     $scope.paypro = data.stateParams.paypro;
     $scope.insufficientFunds = false;
@@ -45,15 +39,39 @@ angular.module('copayApp.controllers').controller('confirmController', function(
     $scope.remainingTimeStr = {
       value: null
     };
-
-    var config = configService.getSync().wallet;
-    var feeLevel = config.settings && config.settings.feeLevel ? config.settings.feeLevel : 'normal';
-    $scope.feeLevel = feeService.feeOpts[feeLevel];
-    if ($scope.isGlidera) $scope.network = glideraService.getEnvironment();
-    else $scope.network = (new bitcore.Address($scope.toAddress)).network.name;
+    $scope.network = (new bitcore.Address($scope.toAddress)).network.name;
+    setFee();
     resetValues();
     setwallets();
+    applyButtonText();
   });
+
+  function setFee(customFeeLevel, cb) {
+    feeService.getCurrentFeeValue($scope.network, customFeeLevel, function(err, currentFeePerKb) {
+      var config = configService.getSync().wallet;
+      var configFeeLevel = (config.settings && config.settings.feeLevel) ? config.settings.feeLevel : 'normal';
+      feePerKb = currentFeePerKb;
+      feeLevel = customFeeLevel ? customFeeLevel : configFeeLevel;
+      $scope.feeLevel = feeService.feeOpts[feeLevel];
+      if (cb) return cb();
+    });
+  }
+
+  function useSelectedWallet() {
+    if (!$scope.useSendMax) displayValues();
+    $scope.onWalletSelect($scope.wallet);
+  }
+
+  function applyButtonText(multisig) {
+    $scope.buttonText = $scope.isCordova ? gettextCatalog.getString('Slide') + ' ' : gettextCatalog.getString('Click') + ' ';
+
+    if ($scope.paypro) {
+      $scope.buttonText += gettextCatalog.getString('to pay');
+    } else if (multisig) {
+      $scope.buttonText += gettextCatalog.getString('to accept');
+    } else
+      $scope.buttonText += gettextCatalog.getString('to send');
+  };
 
   function setwallets() {
     $scope.wallets = profileService.getWallets({
@@ -71,20 +89,17 @@ angular.module('copayApp.controllers').controller('confirmController', function(
       return;
     }
 
-    if ($scope.isGlidera == 'buy') {
-      initConfirm();
-      return;
-    }
-
     var filteredWallets = [];
     var index = 0;
     var enoughFunds = false;
+    var walletsUpdated = 0;
 
     lodash.each($scope.wallets, function(w) {
       walletService.getStatus(w, {}, function(err, status) {
         if (err || !status) {
           $log.error(err);
         } else {
+          walletsUpdated++;
           w.status = status;
           if (!status.availableBalanceSat) $log.debug('No balance available in: ' + w.name);
           if (status.availableBalanceSat > toAmount) {
@@ -105,9 +120,23 @@ angular.module('copayApp.controllers').controller('confirmController', function(
               }
             } else initConfirm();
           } else {
-            if (!enoughFunds) $scope.insufficientFunds = true;
-            displayValues();
-            $log.warn('No wallet available to make the payment');
+
+            // Were we able to update any wallet?
+            if (walletsUpdated) {
+              if (!enoughFunds) $scope.insufficientFunds = true;
+              displayValues();
+              $log.warn('No wallet available to make the payment');
+            } else {
+              popupService.showAlert(gettextCatalog.getString('Could not update wallets'), bwcError.msg(err), function() {
+                $ionicHistory.nextViewOptions({
+                  disableAnimate: true,
+                  historyRoot: true
+                });
+                $ionicHistory.clearHistory();
+                $state.go('tabs.send');
+              });
+            }
+
           }
           $timeout(function() {
             $scope.$apply();
@@ -115,6 +144,10 @@ angular.module('copayApp.controllers').controller('confirmController', function(
         }
       });
     });
+  };
+
+  $scope.toggleAddress = function() {
+    $scope.showAddress = !$scope.showAddress;
   };
 
   var initConfirm = function() {
@@ -133,97 +166,81 @@ angular.module('copayApp.controllers').controller('confirmController', function(
     $scope.amountStr = txFormatService.formatAmountStr(toAmount);
     $scope.displayAmount = getDisplayAmount($scope.amountStr);
     $scope.displayUnit = getDisplayUnit($scope.amountStr);
-    if ($scope.cardAmountUSD) {
-      $scope.alternativeAmountStr = $filter('formatFiatAmount')($scope.cardAmountUSD) + ' USD';
-    } else if ($scope.giftCardAmountUSD) {
-      $scope.alternativeAmountStr = $filter('formatFiatAmount')($scope.giftCardAmountUSD) + ' USD';
-    } else {
-      txFormatService.formatAlternativeStr(toAmount, function(v) {
-        $scope.alternativeAmountStr = v;
-      });
-    }
-    if ($scope.isGlidera == 'buy') $scope.getBuyPrice();
-    if ($scope.isGlidera == 'sell') $scope.getSellPrice();
+    txFormatService.formatAlternativeStr(toAmount, function(v) {
+      $scope.alternativeAmountStr = v;
+    });
   };
 
   function resetValues() {
-    $scope.displayAmount = $scope.displayUnit = $scope.fee = $scope.alternativeAmountStr = $scope.insufficientFunds = $scope.noMatchingWallet = null;
+    $scope.displayAmount = $scope.displayUnit = $scope.fee = $scope.feeFiat = $scope.feeRateStr = $scope.alternativeAmountStr = $scope.insufficientFunds = $scope.noMatchingWallet = null;
+    $scope.showAddress = false;
   };
 
   $scope.getSendMaxInfo = function() {
     resetValues();
+    var config = configService.getSync().wallet;
 
-    ongoingProcess.set('gettingFeeLevels', true);
-    feeService.getCurrentFeeValue($scope.network, function(err, feePerKb) {
-      ongoingProcess.set('gettingFeeLevels', false);
+    ongoingProcess.set('retrievingInputs', true);
+    walletService.getSendMaxInfo($scope.wallet, {
+      feePerKb: feePerKb,
+      excludeUnconfirmedUtxos: !config.spendUnconfirmed,
+      returnInputs: true,
+    }, function(err, resp) {
+      ongoingProcess.set('retrievingInputs', false);
       if (err) {
-        popupService.showAlert(gettextCatalog.getString('Error'), err.message);
+        popupService.showAlert(gettextCatalog.getString('Error'), err);
         return;
       }
-      var config = configService.getSync().wallet;
 
-      ongoingProcess.set('retrievingInputs', true);
-      walletService.getSendMaxInfo($scope.wallet, {
+      if (resp.amount == 0) {
+        $scope.insufficientFunds = true;
+        popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('Not enough funds for fee'));
+        return;
+      }
+
+      $scope.sendMaxInfo = {
+        sendMax: true,
+        amount: resp.amount,
+        inputs: resp.inputs,
+        fee: resp.fee,
         feePerKb: feePerKb,
-        excludeUnconfirmedUtxos: !config.spendUnconfirmed,
-        returnInputs: true,
-      }, function(err, resp) {
-        ongoingProcess.set('retrievingInputs', false);
-        if (err) {
-          popupService.showAlert(gettextCatalog.getString('Error'), err);
-          return;
-        }
+      };
 
-        if (resp.amount == 0) {
-          $scope.insufficientFunds = true;
-          popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('Not enough funds for fee'));
-          return;
-        }
+      cachedSendMax[$scope.wallet.id] = $scope.sendMaxInfo;
 
-        $scope.sendMaxInfo = {
-          sendMax: true,
-          amount: resp.amount,
-          inputs: resp.inputs,
-          fee: resp.fee,
-          feePerKb: feePerKb,
-        };
-
-        cachedSendMax[$scope.wallet.id] = $scope.sendMaxInfo;
-
-        var msg = gettextCatalog.getString("{{fee}} will be deducted for bitcoin networking fees.", {
-          fee: txFormatService.formatAmountStr(resp.fee)
-        });
-        var warningMsg = verifyExcludedUtxos();
-
-        if (!lodash.isEmpty(warningMsg))
-          msg += '\n' + warningMsg;
-
-        popupService.showAlert(null, msg, function() {
-          setSendMaxValues(resp);
-
-          createTx($scope.wallet, true, function(err, txp) {
-            if (err) return;
-            cachedTxp[$scope.wallet.id] = txp;
-            apply(txp);
-          });
-        });
-
-        function verifyExcludedUtxos() {
-          var warningMsg = [];
-          if (resp.utxosBelowFee > 0) {
-            warningMsg.push(gettextCatalog.getString("A total of {{amountBelowFeeStr}} were excluded. These funds come from UTXOs smaller than the network fee provided.", {
-              amountBelowFeeStr: txFormatService.formatAmountStr(resp.amountBelowFee)
-            }));
-          }
-
-          if (resp.utxosAboveMaxSize > 0) {
-            warningMsg.push(gettextCatalog.getString("A total of {{amountAboveMaxSizeStr}} were excluded. The maximum size allowed for a transaction was exceeded.", {
-              amountAboveMaxSizeStr: txFormatService.formatAmountStr(resp.amountAboveMaxSize)
-            }));
-          }
-          return warningMsg.join('\n');
-        };
+      var msg = gettextCatalog.getString("{{fee}} will be deducted for bitcoin networking fees.", {
+        fee: txFormatService.formatAmountStr(resp.fee)
       });
+      var warningMsg = verifyExcludedUtxos();
+
+      if (!lodash.isEmpty(warningMsg))
+        msg += '\n' + warningMsg;
+
+      popupService.showAlert(null, msg, function() {
+        setSendMaxValues(resp);
+
+        createTx($scope.wallet, true, function(err, txp) {
+          if (err) return;
+          cachedTxp[$scope.wallet.id] = txp;
+          apply(txp);
+        });
+      });
+
+      function verifyExcludedUtxos() {
+        var warningMsg = [];
+        if (resp.utxosBelowFee > 0) {
+          warningMsg.push(gettextCatalog.getString("A total of {{amountBelowFeeStr}} were excluded. These funds come from UTXOs smaller than the network fee provided.", {
+            amountBelowFeeStr: txFormatService.formatAmountStr(resp.amountBelowFee)
+          }));
+        }
+
+        if (resp.utxosAboveMaxSize > 0) {
+          warningMsg.push(gettextCatalog.getString("A total of {{amountAboveMaxSizeStr}} were excluded. The maximum size allowed for a transaction was exceeded.", {
+            amountAboveMaxSizeStr: txFormatService.formatAmountStr(resp.amountAboveMaxSize)
+          }));
+        }
+        return warningMsg.join('\n');
+      };
     });
   };
 
@@ -238,10 +255,14 @@ angular.module('copayApp.controllers').controller('confirmController', function(
     $scope.displayAmount = getDisplayAmount($scope.amountStr);
     $scope.displayUnit = getDisplayUnit($scope.amountStr);
     $scope.fee = txFormatService.formatAmountStr(data.fee);
+    txFormatService.formatAlternativeStr(data.fee, function(v) {
+      $scope.feeFiat = v;
+    });
     toAmount = parseFloat((data.amount * satToUnit).toFixed(unitDecimals));
     txFormatService.formatAlternativeStr(data.amount, function(v) {
       $scope.alternativeAmountStr = v;
     });
+    $scope.feeRateStr = (data.fee / (data.amount + data.fee) * 100).toFixed(2) + '%';
     $timeout(function() {
       $scope.$apply();
     });
@@ -252,7 +273,7 @@ angular.module('copayApp.controllers').controller('confirmController', function(
   });
 
   $scope.showWalletSelector = function() {
-    $scope.walletSelectorTitle = $scope.isGlidera == 'buy' ? 'Receive in' : $scope.isGlidera == 'sell' ? 'Sell From' : gettextCatalog.getString('Send from');
+    $scope.walletSelectorTitle = gettextCatalog.getString('Send from');
     if (!$scope.useSendMax && ($scope.insufficientFunds || $scope.noMatchingWallet)) return;
     $scope.showWallets = true;
   };
@@ -268,6 +289,8 @@ angular.module('copayApp.controllers').controller('confirmController', function(
       $scope.getSendMaxInfo();
     } else
       setWallet(wallet);
+
+    applyButtonText(wallet.credentials.m > 1);
   };
 
   $scope.showDescriptionPopup = function() {
@@ -328,8 +351,6 @@ angular.module('copayApp.controllers').controller('confirmController', function(
     var stop;
     $scope.wallet = wallet;
     $scope.fee = $scope.txp = null;
-
-    if ($scope.isGlidera) return;
     if (stop) {
       $timeout.cancel(stop);
       stop = null;
@@ -363,7 +384,11 @@ angular.module('copayApp.controllers').controller('confirmController', function(
 
   function apply(txp) {
     $scope.fee = txFormatService.formatAmountStr(txp.fee);
+    txFormatService.formatAlternativeStr(txp.fee, function(v) {
+      $scope.feeFiat = v;
+    });
     $scope.txp = txp;
+    $scope.feeRateStr = (txp.fee / (txp.amount + txp.fee) * 100).toFixed(2) + '%';
     $timeout(function() {
       $scope.$apply();
     });
@@ -407,7 +432,7 @@ angular.module('copayApp.controllers').controller('confirmController', function(
       txp.inputs = $scope.sendMaxInfo.inputs;
       txp.fee = $scope.sendMaxInfo.fee;
     } else
-      txp.feeLevel = config.settings && config.settings.feeLevel ? config.settings.feeLevel : 'normal';
+      txp.feeLevel = feeLevel;
 
     txp.message = description;
 
@@ -451,47 +476,6 @@ angular.module('copayApp.controllers').controller('confirmController', function(
       $scope.sendStatus = '';
       $timeout(function() {
         $scope.$apply();
-      });
-      return;
-    }
-
-    if ($scope.isGlidera) {
-      $scope.get2faCode(function(err, sent) {
-        if (err) {
-          popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('Could not send confirmation code to your phone'));
-          return;
-        }
-        if (sent) {
-          var title = gettextCatalog.getString("Please, enter the code below");
-          var message = gettextCatalog.getString("A SMS containing a confirmation code was sent to your phone.");
-          popupService.showPrompt(title, message, null, function(twoFaCode) {
-            if (typeof twoFaCode == 'undefined') return;
-            if ($scope.isGlidera == 'buy') {
-              $scope.buyRequest(wallet, twoFaCode, function(err, data) {
-                if (err) {
-                  popupService.showAlert(gettextCatalog.getString('Error'), err);
-                  return;
-                }
-                $scope.sendStatus = 'success';
-                $timeout(function() {
-                  $scope.$digest();
-                });
-              })
-            }
-            if ($scope.isGlidera == 'sell') {
-              $scope.sellRequest(wallet, twoFaCode, function(err, data) {
-                if (err) {
-                  popupService.showAlert(gettextCatalog.getString('Error'), err);
-                  return;
-                }
-                $scope.sendStatus = 'success';
-                $timeout(function() {
-                  $scope.$digest();
-                });
-              })
-            }
-          });
-        }
       });
       return;
     }
@@ -549,7 +533,9 @@ angular.module('copayApp.controllers').controller('confirmController', function(
         (processName == 'sendingTx' && !$scope.wallet.canSign() && !$scope.wallet.isPrivKeyExternal())
       ) && !isOn) {
       $scope.sendStatus = 'success';
-      $scope.$digest();
+      $timeout(function() {
+        $scope.$digest();
+      }, 100);
     } else if (showName) {
       $scope.sendStatus = showName;
     }
@@ -563,9 +549,6 @@ angular.module('copayApp.controllers').controller('confirmController', function(
 
   $scope.onSuccessConfirm = function() {
     var previousView = $ionicHistory.viewHistory().backView && $ionicHistory.viewHistory().backView.stateName;
-    var fromBitPayCard = previousView.match(/tabs.bitpayCard/) ? true : false;
-    var fromAmazon = previousView.match(/tabs.giftcards.amazon/) ? true : false;
-    var fromGlidera = previousView.match(/tabs.buyandsell.glidera/) ? true : false;
 
     $ionicHistory.nextViewOptions({
       disableAnimate: true
@@ -573,197 +556,13 @@ angular.module('copayApp.controllers').controller('confirmController', function(
     $ionicHistory.removeBackView();
     $scope.sendStatus = '';
 
-    if (fromBitPayCard) {
-      $timeout(function() {
-        $state.transitionTo('tabs.bitpayCard', {
-          id: $stateParams.cardId
-        });
-      }, 100);
-    } else if (fromAmazon) {
-      $ionicHistory.nextViewOptions({
-        disableAnimate: true,
-        historyRoot: true
-      });
-      $ionicHistory.clearHistory();
-      $state.go('tabs.home').then(function() {
-        $state.transitionTo('tabs.giftcards.amazon', {
-          cardClaimCode: $scope.amazonGiftCard ? $scope.amazonGiftCard.claimCode : null
-        });
-      });
-    } else if (fromGlidera) {
-      $ionicHistory.nextViewOptions({
-        disableAnimate: true,
-        historyRoot: true
-      });
-      $ionicHistory.clearHistory();
-      $state.go('tabs.home').then(function() {
-        $state.transitionTo('tabs.buyandsell.glidera');
-      });
-    } else {
-      $ionicHistory.nextViewOptions({
-        disableAnimate: true,
-        historyRoot: true
-      });
-      $ionicHistory.clearHistory();
-      $state.go('tabs.send').then(function() {
-        $state.transitionTo('tabs.home');
-      });
-    }
-  };
-
-  $scope.get2faCode = function(cb) {
-    ongoingProcess.set('sending2faCode', true);
-    $timeout(function() {
-      glideraService.get2faCode($scope.glideraAccessToken, function(err, sent) {
-        ongoingProcess.set('sending2faCode', false);
-        return cb(err, sent);
-      });
-    }, 100);
-  };
-
-  $scope.buyRequest = function(wallet, twoFaCode, cb) {
-    ongoingProcess.set('buyingBitcoin', true);
-    $timeout(function() {
-      walletService.getAddress(wallet, false, function(err, walletAddr) {
-        if (err) {
-          ongoingProcess.set('buyingBitcoin', false);
-          popupService.showAlert(gettextCatalog.getString('Error'), bwcError.cb(err, 'Could not create address'));
-          return;
-        }
-        var data = {
-          destinationAddress: walletAddr,
-          qty: $scope.buyPrice.qty,
-          priceUuid: $scope.buyPrice.priceUuid,
-          useCurrentPrice: false,
-          ip: null
-        };
-        glideraService.buy($scope.glideraAccessToken, twoFaCode, data, function(err, data) {
-          ongoingProcess.set('buyingBitcoin', false);
-          return cb(err, data);
-        });
-      });
-    }, 100);
-  };
-
-  $scope.sellRequest = function(wallet, twoFaCode, cb) {
-    var outputs = [];
-    var config = configService.getSync();
-    var configWallet = config.wallet;
-    var walletSettings = configWallet.settings;
-
-    ongoingProcess.set('creatingTx', true);
-    walletService.getAddress(wallet, null, function(err, refundAddress) {
-      if (!refundAddress) {
-        ongoingProcess.clear();
-        popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err, 'Could not create address'));
-        return;
-      }
-      glideraService.getSellAddress($scope.glideraAccessToken, function(err, sellAddress) {
-        if (!sellAddress || err) {
-          ongoingProcess.clear();
-          popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('Could not get the destination bitcoin address'));
-          return;
-        }
-        var amount = parseInt(($scope.sellPrice.qty * 100000000).toFixed(0));
-        var comment = 'Glidera transaction';
-
-        outputs.push({
-          'toAddress': sellAddress,
-          'amount': amount,
-          'message': comment
-        });
-
-        var txp = {
-          toAddress: sellAddress,
-          amount: amount,
-          outputs: outputs,
-          message: comment,
-          payProUrl: null,
-          excludeUnconfirmedUtxos: configWallet.spendUnconfirmed ? false : true,
-          feeLevel: walletSettings.feeLevel || 'normal',
-          customData: {
-            'glideraToken': $scope.glideraAccessToken
-          }
-        };
-
-        walletService.createTx(wallet, txp, function(err, createdTxp) {
-          ongoingProcess.clear();
-          if (err) {
-            popupService.showAlert(gettextCatalog.getString('Error'), err.message || bwcError.msg(err));
-            return;
-          }
-          walletService.prepare(wallet, function(err, password) {
-            if (err) {
-              ongoingProcess.clear();
-              popupService.showAlert(gettextCatalog.getString('Error'), err.message || bwcError.msg(err));
-              return;
-            }
-            ongoingProcess.set('signingTx', true);
-            walletService.publishTx(wallet, createdTxp, function(err, publishedTxp) {
-              if (err) {
-                ongoingProcess.clear();
-                popupService.showAlert(gettextCatalog.getString('Error'), err.message ||  bwcError.msg(err));
-                return;
-              }
-
-              walletService.signTx(wallet, publishedTxp, password, function(err, signedTxp) {
-                if (err) {
-                  ongoingProcess.clear();
-                  popupService.showAlert(gettextCatalog.getString('Error'), err.message ||  bwcError.msg(err));
-                  walletService.removeTx(wallet, signedTxp, function(err) {
-                    if (err) $log.debug(err);
-                  });
-                  return;
-                }
-                var rawTx = signedTxp.raw;
-                var data = {
-                  refundAddress: refundAddress,
-                  signedTransaction: rawTx,
-                  priceUuid: $scope.sellPrice.priceUuid,
-                  useCurrentPrice: $scope.sellPrice.priceUuid ? false : true,
-                  ip: null
-                };
-                ongoingProcess.set('sellingBitcoin', true);
-                glideraService.sell($scope.glideraAccessToken, twoFaCode, data, function(err, data) {
-                  ongoingProcess.clear();
-                  if (err) {
-                    popupService.showAlert(gettextCatalog.getString('Error'), err.message ||  bwcError.msg(err));
-                    return;
-                  }
-                  return cb(err, data)
-                });
-              });
-            });
-          });
-        });
-      });
+    $ionicHistory.nextViewOptions({
+      disableAnimate: true,
+      historyRoot: true
     });
-  }
-
-  $scope.getBuyPrice = function() {
-    var satToBtc = 1 / 100000000;
-    var price = {};
-    price.qty = (toAmount * satToBtc).toFixed(8);
-    glideraService.buyPrice($scope.glideraAccessToken, price, function(err, buyPrice) {
-      if (err) {
-        popupService.showAlert(gettextCatalog.getString('Error'), 'Could not get exchange information. Please, try again');
-        return;
-      }
-      $scope.buyPrice = buyPrice;
-    });
-  };
-
-  $scope.getSellPrice = function() {
-    var satToBtc = 1 / 100000000;
-    var price = {};
-    price.qty = (toAmount * satToBtc).toFixed(8);
-
-    glideraService.sellPrice($scope.glideraAccessToken, price, function(err, sellPrice) {
-      if (err) {
-        popupService.showAlert(gettextCatalog.getString('Error'), 'Could not get exchange information. Please, try again');
-        return;
-      }
-      $scope.sellPrice = sellPrice;
+    $ionicHistory.clearHistory();
+    $state.go('tabs.send').then(function() {
+      $state.transitionTo('tabs.home');
     });
   };
 
@@ -779,89 +578,34 @@ angular.module('copayApp.controllers').controller('confirmController', function(
 
     walletService.publishAndSign(wallet, txp, function(err, txp) {
       if (err) return setSendError(err);
-
-      var previousView = $ionicHistory.viewHistory().backView && $ionicHistory.viewHistory().backView.stateName;
-      var fromAmazon = previousView.match(/tabs.giftcards.amazon/) ? true : false;
-      if (fromAmazon) {
-        var count = 0;
-        var invoiceId = JSON.parse($scope.paypro.merchant_data).invoiceId;
-        var dataSrc = {
-          currency: 'USD',
-          amount: giftCardAmountUSD,
-          uuid: giftCardUUID,
-          accessKey: giftCardAccessKey,
-          invoiceId: invoiceId,
-          invoiceUrl: $scope.paypro.url,
-          invoiceTime: giftCardInvoiceTime
-        };
-        ongoingProcess.set('creatingGiftCard', true);
-        debounceCreate(count, dataSrc, onSendStatusChange);
-      }
     }, onSendStatusChange);
-  }
-
-  var debounceCreate = lodash.throttle(function(count, dataSrc) {
-    debounceCreateGiftCard(count, dataSrc);
-  }, 8000, {
-    'leading': true
-  });
-
-  var debounceCreateGiftCard = function(count, dataSrc, onSendStatusChange) {
-    amazonService.createGiftCard(dataSrc, function(err, giftCard) {
-      $log.debug("creating gift card " + count);
-      if (err) {
-        giftCard = {};
-        giftCard.status = 'FAILURE';
-        popupService.showAlert(gettextCatalog.getString('Error'), err);
-      }
-
-      if (giftCard.status == 'PENDING' && count < 3) {
-        $log.debug("pending gift card not available yet");
-        debounceCreate(count + 1, dataSrc);
-        return;
-      }
-
-      var now = moment().unix() * 1000;
-
-      var newData = giftCard;
-      newData['invoiceId'] = dataSrc.invoiceId;
-      newData['accessKey'] = dataSrc.accessKey;
-      newData['invoiceUrl'] = dataSrc.invoiceUrl;
-      newData['amount'] = dataSrc.amount;
-      newData['date'] = dataSrc.invoiceTime || now;
-      newData['uuid'] = dataSrc.uuid;
-
-      if (newData.status == 'expired') {
-        amazonService.savePendingGiftCard(newData, {
-          remove: true
-        }, function(err) {
-          $log.error(err);
-          return;
-        });
-      }
-
-      amazonService.savePendingGiftCard(newData, null, function(err) {
-        ongoingProcess.set('creatingGiftCard', false);
-        $log.debug("Saving new gift card with status: " + newData.status);
-        $scope.amazonGiftCard = newData;
-      });
-    });
   };
 
-  $scope.getRates = function() {
-    var config = configService.getSync().wallet.settings;
-    var unitName = config.unitName;
-    var alternativeIsoCode = config.alternativeIsoCode;
-    bitpayCardService.getRates(alternativeIsoCode, function(err, res) {
-      if (err) {
-        $log.warn(err);
-        return;
-      }
-      if (unitName == 'bits') {
-        $scope.exchangeRate = '1,000,000 bits ~ ' + res.rate + ' ' + alternativeIsoCode;
-      } else {
-        $scope.exchangeRate = '1 BTC ~ ' + res.rate + ' ' + alternativeIsoCode;
-      }
+  $scope.chooseFeeLevel = function() {
+
+    $scope.customFeeLevel = feeLevel;
+    $ionicModal.fromTemplateUrl('views/modals/chooseFeeLevel.html', {
+      scope: $scope,
+    }).then(function(modal) {
+      $scope.chooseFeeLevelModal = modal;
+      $scope.openModal();
     });
+    $scope.openModal = function() {
+      $scope.chooseFeeLevelModal.show();
+    };
+    $scope.hideModal = function(customFeeLevel) {
+      if (customFeeLevel) {
+        cachedTxp = {};
+        cachedSendMax = {};
+        ongoingProcess.set('gettingFeeLevels', true);
+        setFee(customFeeLevel, function() {
+          ongoingProcess.set('gettingFeeLevels', false);
+          resetValues();
+          if ($scope.wallet) useSelectedWallet();
+        })
+      }
+      $scope.chooseFeeLevelModal.hide();
+    };
   };
+
 });

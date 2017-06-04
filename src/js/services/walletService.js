@@ -1,9 +1,15 @@
 'use strict';
 
-angular.module('copayApp.services').factory('walletService', function($log, $timeout, lodash, trezor, ledger, storageService, configService, rateService, uxLanguage, $filter, gettextCatalog, bwcError, $ionicPopup, fingerprintService, ongoingProcess, gettext, $rootScope, txFormatService, $ionicModal, $state, bwcService, bitcore, popupService) {
+angular.module('copayApp.services').factory('walletService', function($log, $timeout, lodash, trezor, ledger, intelTEE, storageService, configService, rateService, uxLanguage, $filter, gettextCatalog, bwcError, $ionicPopup, fingerprintService, ongoingProcess, gettext, $rootScope, txFormatService, $ionicModal, $state, bwcService, bitcore, popupService) {
   // `wallet` is a decorated version of client.
 
   var root = {};
+
+  root.externalSource = {
+    ledger: ledger.description,
+    trezor: trezor.description,
+    intelTEE: intelTEE.description
+  }
 
   root.WALLET_STATUS_MAX_TRIES = 7;
   root.WALLET_STATUS_DELAY_BETWEEN_TRIES = 1.4 * 1000;
@@ -38,6 +44,43 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
       txp.signatures = result.signatures;
       return wallet.signTxProposal(txp, cb);
     });
+  };
+
+  var _signWithIntelTEE = function(wallet, txp, cb) {
+    $log.info('Requesting Intel TEE to sign the transaction');
+
+    intelTEE.signTx(wallet.credentials.hwInfo.id, txp, function(err, result) {
+      if (err) return cb(err);
+
+      $log.debug('Intel TEE response', result);
+      txp.signatures = result.Signatures;
+      return wallet.signTxProposal(txp, cb);
+    });
+  };
+
+  root.showMneumonicFromHardware = function(wallet, cb) {
+    switch (wallet.getPrivKeyExternalSourceName()) {
+      case root.externalSource.intelTEE.id:
+        return intelTEE.showMneumonic(wallet.credentials.hwInfo.id, cb);
+        break;
+      default:
+        cb('Error: unrecognized external source');
+        break;
+    }
+  };
+
+  root.showReceiveAddressFromHardware = function(wallet, address, cb) {
+    switch (wallet.getPrivKeyExternalSourceName()) {
+      case root.externalSource.intelTEE.id:
+        root.getAddressObj(wallet, address, function(err, addrObj) {
+          if (err) return cb(err);
+          return intelTEE.showReceiveAddress(wallet.credentials.hwInfo.id, addrObj, cb);
+        });
+        break;
+      default:
+        cb('Error: unrecognized external source');
+        break;
+    }
   };
 
   root.invalidateCache = function(wallet) {
@@ -347,14 +390,16 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
     return ret;
   };
 
-  var updateLocalTxHistory = function(wallet, progressFn, cb) {
+  var updateLocalTxHistory = function(wallet, opts, cb) {
     var FIRST_LIMIT = 5;
     var LIMIT = 50;
     var requestLimit = FIRST_LIMIT;
     var walletId = wallet.credentials.walletId;
     var config = configService.getSync().wallet.settings;
 
-    progressFn = progressFn || function() {};
+    var opts = opts || {};
+    var progressFn = opts.progressFn || function() {};
+    var foundLimitTx = false;
 
     var fixTxsUnit = function(txs) {
       if (!txs || !txs[0] || !txs[0].amountStr) return;
@@ -387,17 +432,17 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
       progressFn(txsFromLocal, 0);
       wallet.completeHistory = txsFromLocal;
 
-      function getNewTxs(newTxs, skip, cb) {
+      function getNewTxs(newTxs, skip, next) {
         getTxsFromServer(wallet, skip, endingTxid, requestLimit, function(err, res, shouldContinue) {
           if (err) {
-            $log.warn(bwcError.msg(err, 'BWS Error')); //TODO
+            $log.warn(bwcError.msg(err, 'Server Error')); //TODO
             if (err instanceof errors.CONNECTION_ERROR || (err.message && err.message.match(/5../))) {
-              log.info('Retrying history download in 5 secs...');
+              $log.info('Retrying history download in 5 secs...');
               return $timeout(function() {
-                return getNewTxs(newTxs, skip, cb);
+                return getNewTxs(newTxs, skip, next);
               }, 5000);
             };
-            return cb(err);
+            return next(err);
           }
 
           newTxs = newTxs.concat(processNewTxs(wallet, lodash.compact(res)));
@@ -408,13 +453,29 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
 
           $log.debug('Syncing TXs. Got:' + newTxs.length + ' Skip:' + skip, ' EndingTxid:', endingTxid, ' Continue:', shouldContinue);
 
+          // TODO Dirty <HACK>
+          // do not sync all history, just looking for a single TX.
+          if (opts.limitTx) {
+
+            foundLimitTx = lodash.find(txsFromLocal, {
+              txid: opts.limitTx,
+            });
+
+            if (foundLimitTx) {
+              $log.debug('Found limitTX: ' + opts.limitTx);
+              return next(null, [foundLimitTx]);
+            }
+          }
+          // </HACK>
+
+
           if (!shouldContinue) {
             $log.debug('Finished Sync: New / soft confirmed Txs: ' + newTxs.length);
-            return cb(null, newTxs);
+            return next(null, newTxs);
           }
 
           requestLimit = LIMIT;
-          getNewTxs(newTxs, skip, cb);
+          getNewTxs(newTxs, skip, next);
         });
       };
 
@@ -451,6 +512,14 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
         }
 
         updateNotes(function() {
+
+          // <HACK>
+          if (foundLimitTx) {
+            $log.debug('Tx history read until limitTx: ' + opts.limitTx);
+            return cb(null, newHistory);
+          }
+          // </HACK>
+
           var historyToSave = JSON.stringify(newHistory);
 
           lodash.each(txs, function(tx) {
@@ -497,31 +566,43 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
   };
 
   root.getTx = function(wallet, txid, cb) {
-    var tx;
+
+    function finish(list){
+      var tx = lodash.find(list, {
+          txid: txid
+      });
+
+      if (!tx) return cb('Could not get transaction');
+      return cb(null, tx);
+    };
 
     if (wallet.completeHistory && wallet.completeHistory.isValid) {
-      tx = lodash.find(wallet.completeHistory, {
-        txid: txid
-      });
-
-      finish();
+      finish(wallet.completeHistory);
     } else {
-      root.getTxHistory(wallet, {}, function(err, txHistory) {
+      root.getTxHistory(wallet, {
+        limitTx: txid
+      }, function(err, txHistory) {
         if (err) return cb(err);
 
-        tx = lodash.find(txHistory, {
-          txid: txid
-        });
-
-        finish();
+        finish(txHistory);
       });
     }
-
-    function finish() {
-      if (tx) return cb(null, tx);
-      else return cb();
-    };
   };
+
+
+  root.clearTxHistory = function(wallet, cb) {
+    root.invalidateCache(wallet);
+
+    storageService.removeTxHistory(wallet.id, function(err) {
+      if (err) {
+        $log.error(err);
+        return cb(err);
+      }
+      return cb();
+    });
+  };
+
+ 
 
   root.getTxHistory = function(wallet, opts, cb) {
     opts = opts || {};
@@ -538,8 +619,12 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
 
     $log.debug('Updating Transaction History');
 
-    updateLocalTxHistory(wallet, opts.progressFn, function(err) {
+    updateLocalTxHistory(wallet, opts, function(err, txs) {
       if (err) return cb(err);
+
+      if (opts.limitTx) {
+        return cb(err, txs);
+      }
 
       wallet.completeHistory.isValid = true;
       return cb(err, wallet.completeHistory);
@@ -587,10 +672,12 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
 
     if (wallet.isPrivKeyExternal()) {
       switch (wallet.getPrivKeyExternalSourceName()) {
-        case 'ledger':
+        case root.externalSource.ledger.id:
           return _signWithLedger(wallet, txp, cb);
-        case 'trezor':
+        case root.externalSource.trezor.id:
           return _signWithTrezor(wallet, txp, cb);
+        case root.externalSource.intelTEE.id:
+          return _signWithIntelTEE(wallet, txp, cb);
         default:
           var msg = 'Unsupported External Key:' + wallet.getPrivKeyExternalSourceName();
           $log.error(msg);
@@ -654,32 +741,42 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
 
   root.updateRemotePreferences = function(clients, prefs, cb) {
     prefs = prefs || {};
+    cb = cb || function() {};
 
     if (!lodash.isArray(clients))
       clients = [clients];
 
-    function updateRemotePreferencesFor(clients, prefs, cb) {
+    function updateRemotePreferencesFor(clients, prefs, next) {
       var wallet = clients.shift();
-      if (!wallet) return cb();
+      if (!wallet) return next();
       $log.debug('Saving remote preferences', wallet.credentials.walletName, prefs);
 
       wallet.savePreferences(prefs, function(err) {
-        // we ignore errors here
-        if (err) $log.warn(err);
 
-        updateRemotePreferencesFor(clients, prefs, cb);
+        if (err) {
+          popupService.showAlert(bwcError.msg(err, gettextCatalog.getString('Could not save preferences on the server')));
+          return next(err);
+        }
+
+        updateRemotePreferencesFor(clients, prefs, next);
       });
     };
 
     // Update this JIC.
-    var config = configService.getSync().wallet.settings;
+    var config = configService.getSync();
+    var walletSettings = config.wallet.settings;
 
     //prefs.email  (may come from arguments)
+    prefs.email = config.emailNotifications.email;
     prefs.language = uxLanguage.getCurrentLanguage();
-    prefs.unit = config.unitCode;
+    prefs.unit = walletSettings.unitCode;
 
-    updateRemotePreferencesFor(clients, prefs, function(err) {
+    updateRemotePreferencesFor(lodash.clone(clients), prefs, function(err) {
       if (err) return cb(err);
+
+      $log.debug('Remote preferences saved for' + lodash.map(clients, function(x) {
+        return x.credentials.walletId;
+      }).join(','));
 
       lodash.each(clients, function(c) {
         c.preferences = lodash.assign(prefs, c.preferences);
@@ -739,13 +836,13 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
     wallet.createAddress({}, function(err, addr) {
       if (err) {
         var prefix = gettextCatalog.getString('Could not create address');
-        if (err.error && err.error.match(/locked/gi)) {
-          $log.debug(err.error);
+        if (err instanceof errors.CONNECTION_ERROR || (err.message && err.message.match(/5../))) {
+          $log.warn(err);
           return $timeout(function() {
             createAddress(wallet, cb);
           }, 5000);
-        } else if (err.message && err.message == 'MAIN_ADDRESS_GAP_REACHED') {
-          $log.warn(err.message);
+        } else if (err instanceof errors.MAIN_ADDRESS_GAP_REACHED || (err.message && err.message == 'MAIN_ADDRESS_GAP_REACHED')) {
+          $log.warn(err);
           prefix = null;
           wallet.getMainAddresses({
             reverse: true,
@@ -795,6 +892,21 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
     });
   };
 
+  root.getAddressObj = function(wallet, address, cb) {
+    wallet.getMainAddresses({
+      reverse: true
+    }, function(err, addr) {
+      if (err) return cb(err);
+      var addrObj = lodash.find(addr, function(a) {
+        return a.address == address;
+      });
+      var err = null;
+      if (!addrObj) {
+        err = 'Error: specified address not in wallet';
+      }
+      return cb(err, addrObj);
+    });
+  };
 
   root.isReady = function(wallet, cb) {
     if (!wallet.isComplete())
@@ -825,8 +937,8 @@ angular.module('copayApp.services').factory('walletService', function($log, $tim
     var warnMsg = gettextCatalog.getString('Your wallet key will be encrypted. The Spending Password cannot be recovered. Be sure to write it down.');
     askPassword(warnMsg, title, function(password) {
       if (!password) return cb('no password');
-      title = gettextCatalog.getString('Confirm you new spending password');
-      askPassword(warnMsg, gettextCatalog.getString('Confirm you new spending password'), function(password2) {
+      title = gettextCatalog.getString('Confirm your new spending password');
+      askPassword(warnMsg, title, function(password2) {
         if (!password2 || password != password2)
           return cb('password mismatch');
 

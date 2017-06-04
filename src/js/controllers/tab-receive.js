@@ -5,35 +5,31 @@ angular.module('copayApp.controllers').controller('tabReceiveController', functi
   var listeners = [];
   $scope.isCordova = platformInfo.isCordova;
   $scope.isNW = platformInfo.isNW;
-  $scope.walletAddrs = {};
 
-  $scope.shareAddress = function(addr) {
-    if ($scope.generatingAddress) return;
-    if ($scope.isCordova) {
-      window.plugins.socialsharing.share('bitcoin:' + addr, null, null, null);
-    }
+  $scope.requestSpecificAmount = function() {
+    $state.go('tabs.paymentRequest.amount', {
+      id: $scope.wallet.credentials.walletId
+    });
   };
 
-  $scope.setAddress = function(forceNew) {
-    if (!$scope.wallet || $scope.generatingAddress || !$scope.wallet.isComplete()) return;
+  $scope.setAddress = function(newAddr) {
     $scope.addr = null;
+    if (!$scope.wallet || $scope.generatingAddress || !$scope.wallet.isComplete()) return;
     $scope.generatingAddress = true;
-    walletService.getAddress($scope.wallet, forceNew, function(err, addr) {
+    walletService.getAddress($scope.wallet, newAddr, function(err, addr) {
       $scope.generatingAddress = false;
-      if (err) popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
+
+      if (err) {
+        //Error is already formated
+        popupService.showAlert(err);
+      }
+
       $scope.addr = addr;
-      if ($scope.walletAddrs[$scope.wallet.id]) $scope.walletAddrs[$scope.wallet.id] = addr;
       $timeout(function() {
         $scope.$apply();
       }, 10);
     });
   };
-
-  $scope.loadAddresses = function(wallet, index) {
-    walletService.getAddress(wallet, false, function(err, addr) {
-      $scope.walletAddrs[wallet.id] = addr;
-    });
-  }
 
   $scope.goCopayers = function() {
     $ionicHistory.removeBackView();
@@ -46,13 +42,6 @@ angular.module('copayApp.controllers').controller('tabReceiveController', functi
         walletId: $scope.wallet.credentials.walletId
       });
     }, 100);
-  };
-
-  $scope.showAddresses = function() {
-    $state.go('tabs.receive.addresses', {
-      walletId: $scope.wallet.credentials.walletId,
-      toAddress: $scope.addr
-    });
   };
 
   $scope.openBackupNeededModal = function() {
@@ -83,80 +72,40 @@ angular.module('copayApp.controllers').controller('tabReceiveController', functi
     });
   };
 
-  $scope.setWallet = function(index) {
-    $scope.wallet = $scope.wallets[index];
-    $scope.walletIndex = index;
-    if ($scope.walletAddrs[$scope.wallet.id].addr) $scope.addr = $scope.walletAddrs[$scope.walletIndex].addr;
-    else $scope.setAddress(false);
-  }
-
-  $scope.isActive = function(index) {
-    return $scope.wallets[index] == $scope.wallet;
-  }
-
-  $scope.walletPosition = function(index) {
-    if (index == $scope.walletIndex) return 'current';
-    if (index < $scope.walletIndex) return 'prev';
-    if (index > $scope.walletIndex) return 'next';
-  }
-
-
-  $scope.$on('Wallet/Changed', function(event, wallet) {
-    if (!wallet) {
-      $log.debug('No wallet provided');
-      return;
+  $scope.shouldShowReceiveAddressFromHardware = function() {
+    var wallet = $scope.wallet;
+    if (wallet.isPrivKeyExternal() && wallet.credentials.hwInfo) {
+      return (wallet.credentials.hwInfo.name == walletService.externalSource.intelTEE.id);
+    } else {
+      return false;
     }
-    if (wallet == $scope.wallet) {
-      $log.debug('No change in wallet');
-      return;
+  };
+
+  $scope.showReceiveAddressFromHardware = function() {
+    var wallet = $scope.wallet;
+    if (wallet.isPrivKeyExternal() && wallet.credentials.hwInfo) {
+      walletService.showReceiveAddressFromHardware(wallet, $scope.addr, function() {});
     }
-    $scope.wallet = wallet;
-    $log.debug('Wallet changed: ' + wallet.name);
-
-    $scope.walletIndex = lodash.findIndex($scope.wallets, function(wallet) {
-      return wallet.id == $scope.wallet.id;
-    });
-
-    if (!$scope.walletAddrs[wallet.id]) $scope.setAddress(false);
-    else $scope.addr = $scope.walletAddrs[wallet.id];
-
-    $timeout(function() {
-      $scope.$apply();
-    }, 100);
-
-  });
-
-  $scope.updateCurrentWallet = function() {
-    walletService.getStatus($scope.wallet, {}, function(err, status) {
-      if (err) {
-        $log.error(err);
-      }
-      $timeout(function() {
-        $scope.wallet = profileService.getWallet($scope.wallet.id);
-        $scope.wallet.status = status;
-        $scope.setAddress();
-        $scope.$apply();
-      }, 200);
-    });
   };
 
   $scope.$on("$ionicView.beforeEnter", function(event, data) {
     $scope.wallets = profileService.getWallets();
+    $scope.singleWallet = $scope.wallets.length == 1;
 
-    lodash.each($scope.wallets, function(wallet, index) {
-      $scope.loadAddresses(wallet);
-    });
+    if (!$scope.wallets[0]) return;
 
+    // select first wallet if no wallet selected previously
+    var selectedWallet = checkSelectedWallet($scope.wallet, $scope.wallets);
+    $scope.onWalletSelect(selectedWallet);
+
+    $scope.showShareButton = platformInfo.isCordova ? (platformInfo.isIOS ? 'iOS' : 'Android') : null;
 
     listeners = [
       $rootScope.$on('bwsEvent', function(e, walletId, type, n) {
         // Update current address
-        if ($scope.wallet && walletId == $scope.wallet.id) $scope.updateCurrentWallet();
+        if ($scope.wallet && walletId == $scope.wallet.id && type == 'NewIncomingTx') $scope.setAddress(true);
       })
     ];
-
-    // Update current wallet
-    if ($scope.wallet) $scope.updateCurrentWallet();
   });
 
   $scope.$on("$ionicView.leave", function(event, data) {
@@ -164,4 +113,29 @@ angular.module('copayApp.controllers').controller('tabReceiveController', functi
       x();
     });
   });
+
+  var checkSelectedWallet = function(wallet, wallets) {
+    if (!wallet) return wallets[0];
+    var w = lodash.find(wallets, function(w) {
+      return w.id == wallet.id;
+    });
+    if (!w) return wallets[0];
+    return wallet;
+  }
+
+  $scope.onWalletSelect = function(wallet) {
+    $scope.wallet = wallet;
+    $scope.setAddress();
+  };
+
+  $scope.showWalletSelector = function() {
+    if ($scope.singleWallet) return;
+    $scope.walletSelectorTitle = gettextCatalog.getString('Address from');
+    $scope.showWallets = true;
+  };
+
+  $scope.shareAddress = function() {
+    if (!$scope.isCordova) return;
+    window.plugins.socialsharing.share('bitcoin:' + $scope.addr, null, null, null);
+  }
 });

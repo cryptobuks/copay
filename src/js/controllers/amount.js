@@ -1,67 +1,60 @@
 'use strict';
 
-angular.module('copayApp.controllers').controller('amountController', function($scope, $filter, $timeout, $ionicScrollDelegate, $ionicHistory, gettextCatalog, platformInfo, lodash, configService, rateService, $stateParams, $window, $state, $log, txFormatService, ongoingProcess, bitpayCardService, popupService, bwcError, payproService, profileService, bitcore, amazonService, glideraService) {
+angular.module('copayApp.controllers').controller('amountController', function($scope, $filter, $timeout, $ionicScrollDelegate, $ionicHistory, gettextCatalog, platformInfo, lodash, configService, rateService, $stateParams, $window, $state, $log, txFormatService, ongoingProcess, popupService, bwcError, payproService, profileService, bitcore, amazonService, nodeWebkitService) {
+  var _id;
   var unitToSatoshi;
   var satToUnit;
   var unitDecimals;
   var satToBtc;
   var SMALL_FONT_SIZE_LIMIT = 10;
   var LENGTH_EXPRESSION_LIMIT = 19;
+  var isNW = platformInfo.isNW;
+  $scope.isChromeApp = platformInfo.isChromeApp;
 
   $scope.$on('$ionicView.leave', function() {
     angular.element($window).off('keydown');
   });
 
   $scope.$on("$ionicView.beforeEnter", function(event, data) {
-    $scope.isGiftCard = data.stateParams.isGiftCard;
+    // Go to...
+    _id = data.stateParams.id; // Optional (BitPay Card ID or Wallet ID)
+    $scope.nextStep = data.stateParams.nextStep;
+    $scope.currency = data.stateParams.currency;
+    $scope.forceCurrency = data.stateParams.forceCurrency;
 
-    // Glidera parameters
-    $scope.isGlidera = data.stateParams.isGlidera;
-    $scope.glideraAccessToken = data.stateParams.glideraAccessToken;
-
-    $scope.cardId = data.stateParams.cardId;
-    $scope.showMenu = $ionicHistory.backView() && $ionicHistory.backView().stateName == 'tabs.send';
-    var isWallet = data.stateParams.isWallet || 'false';
-    $scope.isWallet = (isWallet.toString().trim().toLowerCase() == 'true' ? true : false);
+    $scope.showMenu = $ionicHistory.backView() && ($ionicHistory.backView().stateName == 'tabs.send' ||
+      $ionicHistory.backView().stateName == 'tabs.bitpayCard');
+    $scope.recipientType = data.stateParams.recipientType || null;
     $scope.toAddress = data.stateParams.toAddress;
     $scope.toName = data.stateParams.toName;
     $scope.toEmail = data.stateParams.toEmail;
-    $scope.showAlternativeAmount = !!$scope.cardId || !!$scope.isGiftCard || !!$scope.isGlidera;
+    $scope.showAlternativeAmount = !!$scope.nextStep;
     $scope.toColor = data.stateParams.toColor;
     $scope.showSendMax = false;
 
-    $scope.customAmount = data.stateParams.customAmount;
-
-    if (!$scope.cardId && !$scope.isGiftCard && !$scope.isGlidera && !data.stateParams.toAddress) {
+    if (!$scope.nextStep && !data.stateParams.toAddress) {
       $log.error('Bad params at amount')
       throw ('bad params');
-    }
-
-    if ($scope.isGlidera) {
-      glideraService.getLimits($scope.glideraAccessToken, function(err, limits) {
-        $scope.limits = limits;
-        $timeout(function() {
-          $scope.$apply();
-        });
-      });
     }
 
     var reNr = /^[1234567890\.]$/;
     var reOp = /^[\*\+\-\/]$/;
 
     var disableKeys = angular.element($window).on('keydown', function(e) {
+      if (!e.key) return;
       if (e.which === 8) { // you can add others here inside brackets.
         e.preventDefault();
         $scope.removeDigit();
       }
 
-      if (e.key && e.key.match(reNr))
+      if (e.key.match(reNr)) {
         $scope.pushDigit(e.key);
-
-      else if (e.key && e.key.match(reOp))
+      } else if (e.key.match(reOp)) {
         $scope.pushOperator(e.key);
-
-      else if (e.key && e.key == 'Enter')
+      } else if (e.keyCode === 86) {
+        if (e.ctrlKey || e.metaKey)
+          processClipboard();
+      } else if (e.keyCode === 13)
         $scope.finish();
 
       $timeout(function() {
@@ -71,7 +64,11 @@ angular.module('copayApp.controllers').controller('amountController', function($
 
     var config = configService.getSync().wallet.settings;
     $scope.unitName = config.unitName;
-    $scope.alternativeIsoCode = !!$scope.cardId || !!$scope.isGiftCard ? 'USD' : config.alternativeIsoCode;
+    if (data.stateParams.currency) {
+      $scope.alternativeIsoCode = data.stateParams.currency;
+    } else {
+      $scope.alternativeIsoCode = config.alternativeIsoCode || 'USD';
+    }
     $scope.specificAmount = $scope.specificAlternativeAmount = '';
     $scope.isCordova = platformInfo.isCordova;
     unitToSatoshi = config.unitToSatoshi;
@@ -86,12 +83,26 @@ angular.module('copayApp.controllers').controller('amountController', function($
       $scope.amount = (($stateParams.toAmount) * satToUnit).toFixed(unitDecimals);
     }
 
-    processAmount($scope.amount);
+    processAmount();
 
     $timeout(function() {
       $ionicScrollDelegate.resize();
     }, 10);
   });
+
+  function paste(value) {
+    $scope.amount = value;
+    processAmount();
+    $timeout(function() {
+      $scope.$apply();
+    });
+  };
+
+  function processClipboard() {
+    if (!isNW) return;
+    var value = nodeWebkitService.readFromClipboard();
+    if (value && evaluate(value) > 0) paste(evaluate(value));
+  };
 
   $scope.showSendMaxMenu = function() {
     $scope.showSendMax = true;
@@ -99,17 +110,12 @@ angular.module('copayApp.controllers').controller('amountController', function($
 
   $scope.sendMax = function() {
     $scope.showSendMax = false;
-    $state.transitionTo('tabs.send.confirm', {
-      isWallet: $scope.isWallet,
-      toAmount: null,
-      toAddress: $scope.toAddress,
-      toName: $scope.toName,
-      toEmail: $scope.toEmail,
-      useSendMax: true,
-    });
+    $scope.useSendMax = true;
+    $scope.finish();
   };
 
   $scope.toggleAlternative = function() {
+    if ($scope.forceCurrency) return;
     $scope.showAlternativeAmount = !$scope.showAlternativeAmount;
 
     if ($scope.amount && isExpression($scope.amount)) {
@@ -130,7 +136,7 @@ angular.module('copayApp.controllers').controller('amountController', function($
 
     $scope.amount = ($scope.amount + digit).replace('..', '.');
     checkFontSize();
-    processAmount($scope.amount);
+    processAmount();
   };
 
   $scope.pushOperator = function(operator) {
@@ -157,8 +163,8 @@ angular.module('copayApp.controllers').controller('amountController', function($
   };
 
   $scope.removeDigit = function() {
-    $scope.amount = $scope.amount.slice(0, -1);
-    processAmount($scope.amount);
+    $scope.amount = ($scope.amount).toString().slice(0, -1);
+    processAmount();
     checkFontSize();
   };
 
@@ -168,17 +174,12 @@ angular.module('copayApp.controllers').controller('amountController', function($
     checkFontSize();
   };
 
-  function processAmount(val) {
-    if (!val) {
-      $scope.resetAmount();
-      return;
-    }
-
-    var formatedValue = format(val);
+  function processAmount() {
+    var formatedValue = format($scope.amount);
     var result = evaluate(formatedValue);
     $scope.allowSend = lodash.isNumber(result) && +result > 0;
     if (lodash.isNumber(result)) {
-      $scope.globalResult = isExpression(val) ? '= ' + processResult(result) : '';
+      $scope.globalResult = isExpression($scope.amount) ? '= ' + processResult(result) : '';
       $scope.amountResult = $filter('formatFiatAmount')(toFiat(result));
       $scope.alternativeResult = txFormatService.formatAmount(fromFiat(result) * unitToSatoshi, true);
     }
@@ -219,152 +220,28 @@ angular.module('copayApp.controllers').controller('amountController', function($
     return result.replace('x', '*');
   };
 
-  $scope.getRates = function() {
-    bitpayCardService.getRates($scope.alternativeIsoCode, function(err, res) {
-      if (err) {
-        $log.warn(err);
-        return;
-      }
-      if ($scope.unitName == 'bits') {
-        $scope.exchangeRate = '1,000,000 bits ~ ' + res.rate + ' ' + $scope.alternativeIsoCode;
-      } else {
-        $scope.exchangeRate = '1 BTC ~ ' + res.rate + ' ' + $scope.alternativeIsoCode;
-      }
-    });
-  };
-
   $scope.finish = function() {
     var _amount = evaluate(format($scope.amount));
 
-    if ($scope.cardId) {
-      var amountUSD = $scope.showAlternativeAmount ? _amount : $filter('formatFiatAmount')(toFiat(_amount));
-
-      var dataSrc = {
-        amount: amountUSD,
-        currency: 'USD'
-      };
-
-      ongoingProcess.set('Preparing transaction...', true);
-      $timeout(function() {
-
-        bitpayCardService.topUp($scope.cardId, dataSrc, function(err, invoiceId) {
-          if (err) {
-            ongoingProcess.set('Preparing transaction...', false);
-            popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
-            return;
-          }
-
-          bitpayCardService.getInvoice(invoiceId, function(err, data) {
-            if (err) {
-              ongoingProcess.set('Preparing transaction...', false);
-              popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
-              return;
-            }
-            var payProUrl = data.paymentUrls.BIP73;
-
-            payproService.getPayProDetails(payProUrl, function(err, payProDetails) {
-              ongoingProcess.set('Preparing transaction...', false);
-              if (err) {
-                popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
-                return;
-              }
-              var stateParams = {
-                cardId: $scope.cardId,
-                cardAmountUSD: amountUSD,
-                toName: $scope.toName,
-                toAmount: payProDetails.amount,
-                toAddress: payProDetails.toAddress,
-                description: payProDetails.memo,
-                paypro: payProDetails
-              };
-
-              $state.transitionTo('tabs.bitpayCard.confirm', stateParams);
-            }, true);
-          });
-        });
-      });
-
-    } else if ($scope.isGiftCard) {
-      ongoingProcess.set('Preparing transaction...', true);
-      // Get first wallet as UUID
-      var uuid;
-      try {
-        uuid = profileService.getWallets({
-          onlyComplete: true,
-          network: amazonService.getEnvironment(),
-        })[0].id;
-      } catch (err) {
-        ongoingProcess.set('Preparing transaction...', false);
-        popupService.showAlert(gettextCatalog.getString('Error'), gettextCatalog.getString('No wallet found!'));
-        return;
-      };
-      var amountUSD = $scope.showAlternativeAmount ? _amount : $filter('formatFiatAmount')(toFiat(_amount));
-      var dataSrc = {
-        currency: 'USD',
-        amount: amountUSD,
-        uuid: uuid
-      };
-
-      amazonService.createBitPayInvoice(dataSrc, function(err, dataInvoice) {
-        if (err) {
-          ongoingProcess.set('Preparing transaction...', false);
-          popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
-          return;
-        }
-
-        amazonService.getBitPayInvoice(dataInvoice.invoiceId, function(err, invoice) {
-          if (err) {
-            ongoingProcess.set('Preparing transaction...', false);
-            popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
-            return;
-          }
-
-          var payProUrl = invoice.paymentUrls.BIP73;
-
-          payproService.getPayProDetails(payProUrl, function(err, payProDetails) {
-            ongoingProcess.set('Preparing transaction...', false);
-            if (err) {
-              popupService.showAlert(gettextCatalog.getString('Error'), bwcError.msg(err));
-              return;
-            }
-            var stateParams = {
-              giftCardAmountUSD: amountUSD,
-              giftCardAccessKey: dataInvoice.accessKey,
-              giftCardInvoiceTime: invoice.invoiceTime,
-              giftCardUUID: dataSrc.uuid,
-              toAmount: payProDetails.amount,
-              toAddress: payProDetails.toAddress,
-              description: payProDetails.memo,
-              paypro: payProDetails
-            };
-
-            $state.transitionTo('tabs.giftcards.amazon.confirm', stateParams);
-          }, true);
-        });
-      });
-    } else if ($scope.isGlidera) {
-      var amount = $scope.showAlternativeAmount ? fromFiat(_amount) : _amount;
-      $state.transitionTo('tabs.buyandsell.glidera.confirm', {
-        toAmount: (amount * unitToSatoshi).toFixed(0),
-        isGlidera: $scope.isGlidera,
-        glideraAccessToken: $scope.glideraAccessToken
+    if ($scope.nextStep) {
+      $state.transitionTo($scope.nextStep, {
+        id: _id,
+        amount: $scope.useSendMax ? null : _amount,
+        currency: $scope.showAlternativeAmount ? $scope.alternativeIsoCode : $scope.unitName,
+        useSendMax: $scope.useSendMax
       });
     } else {
       var amount = $scope.showAlternativeAmount ? fromFiat(_amount) : _amount;
-      if ($scope.customAmount) {
-        $state.transitionTo('tabs.receive.customAmount', {
-          toAmount: (amount * unitToSatoshi).toFixed(0),
-          toAddress: $scope.toAddress
-        });
-      } else {
-        $state.transitionTo('tabs.send.confirm', {
-          isWallet: $scope.isWallet,
-          toAmount: (amount * unitToSatoshi).toFixed(0),
-          toAddress: $scope.toAddress,
-          toName: $scope.toName,
-          toEmail: $scope.toEmail
-        });
-      }
+      $state.transitionTo('tabs.send.confirm', {
+        recipientType: $scope.recipientType,
+        toAmount: $scope.useSendMax ? null : (amount * unitToSatoshi).toFixed(0),
+        toAddress: $scope.toAddress,
+        toName: $scope.toName,
+        toEmail: $scope.toEmail,
+        toColor: $scope.toColor,
+        useSendMax: $scope.useSendMax
+      });
     }
+    $scope.useSendMax = null;
   };
 });

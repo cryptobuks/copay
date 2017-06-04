@@ -1,0 +1,34 @@
+<ion-modal-view id="settings-fee" class="settings" ng-controller="preferencesFeeController" ng-init="init()">
+  <ion-header-bar align-title="center" class="bar-royal">
+    <button class="button button-clear" ng-click="hideModal()">
+      Close
+    </button>
+    <div class="title">
+      {{'Bitcoin Network Fee Policy'|translate}}
+    </div>
+  </ion-header-bar>
+  <ion-content>
+    <div class="settings-explanation">
+      <div class="estimates">
+        <div>
+          <span translate>Average confirmation time</span>:
+          <span class="fee-minutes" ng-if="avgConfirmationTime">{{avgConfirmationTime | amDurationFormat: 'minute'}}</span>
+          <span ng-if="loadingFee">...</span>
+        </div>
+        <div>
+          <span translate>Current fee rate for this policy</span>:
+          <span class="fee-rate" ng-if="feePerSatByte">{{feePerSatByte}} satoshis/byte</span>
+          <span ng-if="loadingFee">...</span>
+        </div>
+      </div>
+    </div>
+    <div class="fee-policies">
+      <ion-radio ng-repeat="(fee, level) in feeOpts" ng-value="fee" ng-model="currentFeeLevel" ng-click="save(fee)">
+        {{level|translate}}
+      </ion-radio>
+    </div>
+    <div class="m20t">
+      <button class="button button-standard button-primary" ng-click="chooseNewFee()" translate>Save</button>
+    </div>
+  </ion-content>
+</ion-modal-view>

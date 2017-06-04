@@ -74,20 +74,26 @@
           <span class="label" translate>From</span>
           <div class="wallet">
             <i class="icon big-icon-svg">
-              <img src="img/icon-wallet.svg" ng-style="{'background-color': wallet.color}" class="bg"/>
+              <img src="img/icon-wallet.svg" ng-class="{'wallet-background-color-default': !wallet.color}" ng-style="{'background-color': wallet.color}" class="bg"/>
             </i>
             <div>{{wallet.name}}</div>
           </div>
         </div>
-        <div class="item single-line">
+        <div class="item single-line" ng-if="isShared">
           <span class="label" translate>Created by</span>
           <span class="item-note">
-            {{tx.creatorName}} <time>{{ (tx.ts || tx.createdOn ) * 1000 | amDateFormat:'MM/DD/YYYY hh:mm a'}}</time>
+            {{tx.creatorName}}
+          </span>
+        </div>
+        <div class="item single-line" ng-if="tx.ts || tx.createdOn">
+          <span class="label" translate>Date</span>
+          <span class="item-note">
+            <time>{{ (tx.ts || tx.createdOn ) * 1000 | amDateFormat:'MM/DD/YYYY hh:mm a'}}</time>
           </span>
         </div>
         <div class="item single-line" ng-show="tx.message">
           <span class="label" translate>Memo</span>
-          <span class="item-note">
+          <span class="m15l item-note">
             {{tx.message}}
           </span>
         </div>
@@ -129,7 +135,7 @@
         </div>
         <div ng-if="actionList[0]">
           <div class="item item-divider" translate>Timeline</div>
-          <div class="item timeline-item" ng-class="{'action-created' : a.type == 'created' || a.type == 'accept', 'action-rejected' : a.type == 'reject'}" ng-repeat="a in actionList | orderBy: 'time' :true track by $index">
+          <div class="item timeline-item" ng-class="{'action-created' : a.type == 'created' || a.type == 'accept', 'action-rejected' : a.type == 'reject'}" ng-repeat="a in actionList track by $index">
             <div class="timeline-content">
               <div class="timeline-content__icon">
                 <div class="rejected" ng-if="a.type === 'reject'">!</div>
@@ -163,22 +169,21 @@
 
   <click-to-accept
     ng-click="onConfirm(statusChangeHandler)"
-    ng-if="tx.pendingForUs && canSign && !paymentExpired && hasClick"
+    ng-if="tx.pendingForUs && canSign && !paymentExpired && !isCordova"
     click-send-status="sendStatus"
     has-wallet-chosen="true">
-    {{'Accept'| translate}}
+    {{buttonText}}
   </click-to-accept>
   <slide-to-accept
-    ng-if="tx.pendingForUs && canSign && !paymentExpired && !hasClick"
+    ng-if="tx.pendingForUs && canSign && !paymentExpired && isCordova"
     slide-on-confirm="onConfirm()"
     slide-send-status="sendStatus"
     has-wallet-chosen="true">
-    {{'Accept'| translate}}
+    {{buttonText}}
   </slide-to-accept>
   <slide-to-accept-success
     slide-success-show="sendStatus === 'success'"
-    slide-success-on-confirm="onSuccessConfirm()"
-    >
+    slide-success-on-confirm="onSuccessConfirm()">
     {{'Payment Sent' | translate}}
   </slide-to-accept-success>
 </ion-modal-view>

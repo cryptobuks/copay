@@ -4,7 +4,7 @@ angular.module('copayApp.controllers').controller('preferencesAltCurrencyControl
   function($scope, $log, $timeout, $ionicHistory, configService, rateService, lodash, profileService, walletService, storageService) {
 
     var next = 10;
-    var completeAlternativeList;
+    var completeAlternativeList = [];
 
     function init() {
       var unusedCurrencyList = [{
@@ -66,9 +66,7 @@ angular.module('copayApp.controllers').controller('preferencesAltCurrencyControl
 
         $ionicHistory.goBack();
         saveLastUsed(newAltCurrency);
-        walletService.updateRemotePreferences(profileService.getWallets(), {}, function() {
-          $log.debug('Remote preferences saved');
-        });
+        walletService.updateRemotePreferences(profileService.getWallets());
       });
     };
 

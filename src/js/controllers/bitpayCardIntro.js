@@ -1,66 +1,47 @@
 'use strict';
-angular.module('copayApp.controllers').controller('bitpayCardIntroController', function($scope, $log, $state, $ionicHistory, storageService, externalLinkService, bitpayCardService, gettextCatalog, popupService) {
-
-  var checkOtp = function(obj, cb) {
-    if (obj.otp) {
-      var msg = gettextCatalog.getString('Enter Two Factor for BitPay Card');
-      popupService.showPrompt(null, msg, null, function(res) {
-        cb(res);
-      });
-    } else {
-      cb();
-    }
-  };
+angular.module('copayApp.controllers').controller('bitpayCardIntroController', function($scope, $log, $state, $ionicHistory, storageService, externalLinkService, bitpayCardService, gettextCatalog, popupService, bitpayAccountService) {
 
   $scope.$on("$ionicView.beforeEnter", function(event, data) {
-
     if (data.stateParams && data.stateParams.secret) {
-      var obj = {
+      var pairData = {
         secret: data.stateParams.secret,
         email: data.stateParams.email,
         otp: data.stateParams.otp
       };
-      checkOtp(obj, function(otp) {
-        obj.otp = otp;
-        bitpayCardService.bitAuthPair(obj, function(err, data) {
-          if (err) {
-            popupService.showAlert(gettextCatalog.getString('Error'), err);
-            return;
-          }
-          var title = gettextCatalog.getString('Add BitPay Card Account?');
-          var msg = gettextCatalog.getString('Would you like to add this account ({{email}}) to your wallet?', {
-            email: obj.email
-          });
-          var ok = gettextCatalog.getString('Add Account');
-          var cancel = gettextCatalog.getString('Go back');
-          popupService.showConfirm(title, msg, ok, cancel, function(res) {
-            if (res) {
-              // Set flag for nextStep
-              storageService.setNextStep('BitpayCard', 'true', function(err) {});
-              // Save data
-              bitpayCardService.setBitpayDebitCards(data, function(err) {
-                if (err) return;
-                $ionicHistory.nextViewOptions({
-                  disableAnimate: true
-                });
-                $state.go('tabs.home').then(function() {
-                  if (data.cards[0]) {
-                    $state.transitionTo('tabs.bitpayCard', {
-                      id: data.cards[0].id
-                    });
-                  }
-                });
-              });
+      var pairingReason = gettextCatalog.getString('add your BitPay Visa card(s)');
+      bitpayAccountService.pair(pairData, pairingReason, function(err, paired, apiContext) {
+        if (err) {
+          popupService.showAlert(gettextCatalog.getString('Error pairing Bitpay Account'), err);
+          return;
+        }
+        if (paired) {
+          bitpayCardService.sync(apiContext, function(err, cards) {
+            if (err) {
+              popupService.showAlert(gettextCatalog.getString('Error updating Debit Cards'), err);
+              return;
             }
+            $ionicHistory.nextViewOptions({
+              disableAnimate: true
+            });
+            $state.go('tabs.home').then(function() {
+              if (cards[0]) {
+                $state.transitionTo('tabs.bitpayCard', {
+                  id: cards[0].id
+                });
+              }
+            });
           });
-        });
-      });
-    } else {
-      bitpayCardService.getCredentials(function(err, credentials) {
-        if (err) popupService.showAlert(null, err);
-        else $log.info('BitPay Debit Card Credentials: Ok.');
+        }
       });
     }
+
+    bitpayAccountService.getAccounts(function(err, accounts) {
+      if (err) {
+        popupService.showAlert(gettextCatalog.getString('Error'), err);
+        return;
+      }
+      $scope.accounts = accounts;
+    });
   });
 
   $scope.bitPayCardInfo = function() {
@@ -74,7 +55,35 @@ angular.module('copayApp.controllers').controller('bitpayCardIntroController', f
   };
 
   $scope.connectBitPayCard = function() {
-    var url = 'https://bitpay.com/visa/dashboard/add-to-bitpay-wallet-confirm';
-    externalLinkService.open(url);
+    if ($scope.accounts.length == 0) {
+      startPairBitPayAccount();
+    } else {
+      showAccountSelector();
+    }
   };
+
+  var startPairBitPayAccount = function() {
+    var url = 'https://bitpay.com/visa/dashboard/add-to-bitpay-wallet-confirm';
+    externalLinkService.open(url);          
+  };
+
+  var showAccountSelector = function() {
+    $scope.accountSelectorTitle = gettextCatalog.getString('From BitPay account');
+    $scope.showAccounts = ($scope.accounts != undefined);
+  };
+
+  $scope.onAccountSelect = function(account) {
+    if (account == undefined) {
+      startPairBitPayAccount();
+    } else {
+      bitpayCardService.sync(account.apiContext, function(err, data) {
+        if (err) {
+          popupService.showAlert(gettextCatalog.getString('Error'), err);
+          return;
+        }
+        $state.go('tabs.home');
+      });
+    }
+  };
+
 });
